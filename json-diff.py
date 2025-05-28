@@ -1,99 +1,178 @@
-# json-diff.py  --  run with:
-# blender --background --python json-diff.py -- --fileA a.blend --fileB b.blend
+#!/usr/bin/env blender --background --python
+# Usage:
+# blender --background --python json-diff.py -- --fileA a.blend --fileB b.blend --out diff.json [-v]
 
-import os, bpy, sys, argparse, hashlib, json
+import bpy, sys, argparse, hashlib, json, logging
+import mathutils, numbers
+
+# ---------------------------------------------------------------------------
+# Configuration
+SKIP_PATHS = {
+    # Heavy mesh & image payloads we do NOT want to load or trigger
+    ".vertices", ".edges", ".loops", ".polygons",
+    ".pixels", ".tiles",
+    # Runtime-only or noisy
+    ".matrix_world", ".rna_type",
+}
+
+PRIMITIVE_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}
+
+LOG = logging.getLogger("blendediff")
 
 # ---------------------------------------------------------------------------
 def parse_cli():
-    # Blender puts your extra args *after* the first “--”
-    argv = sys.argv
-    if "--" in argv:
-        argv = argv[argv.index("--") + 1:]
-    else:
-        argv = []                         # user forgot "--", avoid crash
+    argv = sys.argv[sys.argv.index("--")+1:] if "--" in sys.argv else []
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fileA", required=True)
+    ap.add_argument("--fileB", required=True)
+    ap.add_argument("--out", default="diff.json")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    args = ap.parse_args(argv)
 
-    ap = argparse.ArgumentParser(description="Diff two .blend files")
-    ap.add_argument("--fileA", required=True, help="first blend file")
-    ap.add_argument("--fileB", required=True, help="second blend file")
-    ap.add_argument("--out",   default="diff.json", help="output JSON diff")
-    return ap.parse_args(argv)
-
-# ---------------------------------------------------------------------------
-IGNORE_RNA = {".matrix_world"}           # expand later
-
-def should_skip(prop):
-    return (prop.is_readonly or f".{prop.identifier}" in IGNORE_RNA)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s: %(message)s"
+    )
+    return args
 
 def id_key(id):
     return f"{id.__class__.__name__}:{id.name_full}"
 
-def hash_id(id):
-    h = hashlib.blake2s()                # 256-bit digest, no external deps
-    for prop in id.bl_rna.properties:
-        if should_skip(prop):
-            continue
-        val = getattr(id, prop.identifier)
-        try:
-            payload = json.dumps(val, default=str, sort_keys=True)
-        except TypeError:
-            payload = str(val)
-        h.update(payload.encode("utf-8"))
-    return h.hexdigest()
+# ---------------------------------------------------------------------------
+# Safe serialisation for RNA values (prevents segfaults after switch)
+def serialise_value(val):
+    if isinstance(val, (bool, int, float, str)):
+        return val
+    if isinstance(val, (mathutils.Vector, mathutils.Color, mathutils.Euler, mathutils.Quaternion)):
+        return [float(x) for x in val]
+    if isinstance(val, mathutils.Matrix):
+        return [[float(c) for c in row] for row in val]
+    if isinstance(val, (list, tuple)) and all(isinstance(x, numbers.Number) for x in val):
+        return list(val)
+    return str(val)
 
-def snapshot():
+# ---------------------------------------------------------------------------
+# Walk every reachable RNA path in the datablock
+def walk_rna(rna_obj, base_path=""):
+    out = {}
+    rna = rna_obj.bl_rna
+    for prop in rna.properties:
+        if prop.is_readonly or prop.identifier == "rna_type":
+            continue
+
+        full_path = f"{base_path}.{prop.identifier}" if base_path else prop.identifier
+        if any(full_path.endswith(skip) for skip in SKIP_PATHS):
+            continue
+
+        try:
+            val_raw = getattr(rna_obj, prop.identifier)
+        except ReferenceError:
+            out[full_path] = "<invalid>"
+            LOG.debug("REFERROR: %s", full_path)
+            continue
+        except Exception as ex:
+            out[full_path] = f"<error: {ex}>"
+            LOG.debug("EXCEPTION: %s → %s", full_path, ex)
+            continue
+
+        # Primitives
+        if prop.type in PRIMITIVE_TYPES:
+            out[full_path] = serialise_value(val_raw)
+            LOG.debug("    %s -> %s", full_path, type(val_raw).__name__)
+
+        # Pointer (ID or struct)
+        elif prop.type == 'POINTER':
+            if val_raw is None:
+                out[full_path] = None
+            elif isinstance(val_raw, bpy.types.ID):
+                out[full_path] = id_key(val_raw)
+            else:
+                out.update(walk_rna(val_raw, full_path))
+
+        # Collection
+        elif prop.is_collection:
+            try:
+                for i, item in enumerate(val_raw):
+                    subkey = getattr(item, "name", str(i))
+                    subpath = f"{full_path}[{subkey}]"
+                    if isinstance(item, bpy.types.ID):
+                        out[subpath] = id_key(item)
+                    else:
+                        out.update(walk_rna(item, subpath))
+            except Exception as ex:
+                out[full_path] = f"<error: {ex}>"
+                LOG.debug("COLLECTION ERROR: %s → %s", full_path, ex)
+
+        else:
+            out[full_path] = serialise_value(val_raw)
+
+    return out
+
+# ---------------------------------------------------------------------------
+def snap_datablock(id):
+    props = walk_rna(id)
+    hasher = hashlib.blake2s()
+    for k in sorted(props):
+        hasher.update(k.encode()); hasher.update(str(props[k]).encode())
+    return {"type": id.__class__.__name__, "props": props, "hash": hasher.hexdigest()}
+
+def snapshot_file(filepath):
+    bpy.ops.wm.open_mainfile(filepath=filepath, load_ui=False)
     snap = {}
-    for collection_name in dir(bpy.data):
-        if collection_name.startswith("__"):  # skip dunder methods
+    for coll_name in dir(bpy.data):
+        coll = getattr(bpy.data, coll_name)
+        if not hasattr(coll, "__iter__"):
             continue
-
-        collection = getattr(bpy.data, collection_name)
-
-        # skip non-collections and attributes that don't behave like lists
-        if not hasattr(collection, "__iter__"):
-            continue
-
-        try:
-            for id in collection:
-                # Ensure this is a real ID datablock (e.g. Object, Material)
-                if not hasattr(id, "name_full"):
-                    continue
-                if hasattr(id, "library") and id.library:
-                    continue
-                snap[id_key(id)] = hash_id(id)
-        except TypeError:
-            # Some bpy.data entries like .objects['name'] are dict-like; skip
-            continue
-
+        for id in coll:
+            if not hasattr(id, "name_full"):
+                continue
+            if getattr(id, "library", None):  # skip linked libraries
+                continue
+            snap[id_key(id)] = snap_datablock(id)
     return snap
 
+# ---------------------------------------------------------------------------
+def safe_cmp(a, b):
+    try:
+        return a != b
+    except Exception as ex:
+        LOG.debug("Compare error (%s vs %s): %s", type(a), type(b), ex)
+        return str(a) != str(b)
 
-def load_and_snap(path):
-    bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
-    return snapshot()
+def diff_props(pa, pb):
+    diff = {}
+    for k in pa.keys() | pb.keys():
+        if safe_cmp(pa.get(k), pb.get(k)):
+            diff[k] = {"A": pa.get(k), "B": pb.get(k)}
+    return diff
 
 # ---------------------------------------------------------------------------
 def main():
     args = parse_cli()
 
-    print(f"📁 Working dir: {os.getcwd()}")
-    print(f'args: {args}')
+    LOG.info("🔍 Reading A: %s", args.fileA)
+    snapA = snapshot_file(args.fileA)
 
-    snapA = load_and_snap(args.fileA)
-    snapB = load_and_snap(args.fileB)
+    LOG.info("🔍 Reading B: %s", args.fileB)
+    snapB = snapshot_file(args.fileB)
 
-    added   = {k: snapB[k] for k in snapB.keys() - snapA.keys()}
-    removed = {k: snapA[k] for k in snapA.keys() - snapB.keys()}
-    changed = {k: {"A": snapA[k], "B": snapB[k]}
-               for k in snapA.keys() & snapB.keys()
-               if snapA[k] != snapB[k]}
+    added = {k: {"type": snapB[k]["type"]} for k in snapB.keys() - snapA.keys()}
+    removed = {k: {"type": snapA[k]["type"]} for k in snapA.keys() - snapB.keys()}
+    changed = {}
 
-    if (args.out):
-        with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump({"added": added, "removed": removed, "changed": changed},
-                    fh, indent=2)
-        print(f"✔ Diff written to {args.out}")
-    else:
-        print(json.dump({"added": added, "removed": removed, "changed": changed},indent=2))
+    LOG.info("🔍 Comparing %d common IDs", len(snapA.keys() & snapB.keys()))
+    for k in snapA.keys() & snapB.keys():
+        if snapA[k]["hash"] != snapB[k]["hash"]:
+            diff = diff_props(snapA[k]["props"], snapB[k]["props"])
+            if diff:
+                changed[k] = diff
+
+    with open(args.out, "w", encoding="utf-8") as fh:
+        json.dump({"added": added, "removed": removed, "changed": changed}, fh, indent=2)
+
+    LOG.info("✔ Diff complete: %s", args.out)
 
 if __name__ == "__main__":
     main()
+
+
