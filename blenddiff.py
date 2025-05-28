@@ -109,7 +109,7 @@ def snap_datablock(idb) -> Dict[str, Any]:
     return {"type": idb.__class__.__name__, "props": props, "hash": h.hexdigest()}
 
 
-def snapshot_current_scene(ignore_linked=True) -> Dict[str, Any]:
+def snapshot_current_file(ignore_linked=True) -> Dict[str, Any]:
     """Snapshot of *currently loaded* .blend."""
     snap = {}
     for collname in dir(bpy.data):
@@ -128,7 +128,7 @@ def snapshot_current_scene(ignore_linked=True) -> Dict[str, Any]:
 def snapshot_file(filepath: str, ignore_linked=True) -> Dict[str, Any]:
     """Load file, snapshot, **return dict** – caller must ensure no side effects."""
     bpy.ops.wm.open_mainfile(filepath=filepath, load_ui=False)
-    return snapshot_current_scene(ignore_linked)
+    return snapshot_current_file(ignore_linked)
 
 
 def safe_cmp(a, b) -> bool:
@@ -179,8 +179,10 @@ def diff_current_vs_file(path_other: str, ignore_linked=True) -> Dict[str, Any]:
     Useful from within an add-on when the user hasn’t saved yet.
     """
     try:
-        snap_current = snapshot_current_scene(ignore_linked)
+        path_current = bpy.data.filepath
+        snap_current = snapshot_current_file(ignore_linked)
         snap_other   = snapshot_file(path_other, ignore_linked)
+        bpy.ops.wm.open_mainfile(filepath=path_current, load_ui=False)
         return diff_snapshots(snap_current, snap_other)
     except MemoryError:
         return {"error": "MemoryError", "stage": "snapshot"}
