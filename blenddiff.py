@@ -135,7 +135,7 @@ def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True)
     return _snapshot_current(id_prop, ignore_linked=ignore_linked)
 
 # -----------------------------------------------------------------------------
-# 3. Diff helpers
+# 3. Diff helpers  (replace the entire old block with this one)
 
 def _safe_cmp(a, b):
     try:
@@ -144,39 +144,56 @@ def _safe_cmp(a, b):
         return str(a) != str(b)
 
 
-def _diff_props(a, b):
-    diff: Dict[str, Any] = {}
-    for k in a.keys() | b.keys():
-        if _safe_cmp(a.get(k), b.get(k)):
-            diff[k] = {"A": a.get(k), "B": b.get(k)}
-    return diff
+def _diff_props(pa, pb):
+    """Return a dict of property deltas."""
+    out: Dict[str, Any] = {}
+    for k in pa.keys() | pb.keys():
+        if _safe_cmp(pa.get(k), pb.get(k)):
+            out[k] = {"A": pa.get(k), "B": pb.get(k)}
+    return out
 
 
-def _group_by_type(entries: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    grouped: Dict[str, Dict[str, Any]] = {}
-    for key, block in entries.items():
-        t = block["type"]
-        grouped.setdefault(t, {})[key] = block
-    return grouped
+def _group_by_type(items, snap_src, with_payload=False):
+    """
+    Turn an iterable of identity-keys into:
+        { "Object": { "Cube": payload_or_{} , ... } , ... }
+    """
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for key in items:
+        block = snap_src[key]
+        typ   = block["type"]
+        name  = block["props"]["name"]
+        buckets.setdefault(typ, {})[name] = block if with_payload else {}
+    return buckets
 
 
-def _diff_snap(a, b):
-    added_raw   = {k: b[k] for k in b.keys() - a.keys()}
-    removed_raw = {k: a[k] for k in a.keys() - b.keys()}
-    changed_raw: Dict[str, Any] = {}
+def _diff_snap(snap_a, snap_b):
+    """
+    Produce a dict grouped by datablock type, e.g.
 
-    for k in a.keys() & b.keys():
-        if a[k]["hash"] == b[k]["hash"]:
+      "added":   { "Object": { "Cube.001": {} }, ... }
+      "changed": { "Object": { "Cube": {<prop-diff>} } }
+    """
+    added_keys   = snap_b.keys() - snap_a.keys()
+    removed_keys = snap_a.keys() - snap_b.keys()
+
+    # changed ---------------------------------------------------------------
+    changed: Dict[str, Dict[str, Any]] = {}
+    for key in snap_a.keys() & snap_b.keys():
+        if snap_a[key]["hash"] == snap_b[key]["hash"]:
             continue
-        pd = _diff_props(a[k]["props"], b[k]["props"])
-        if pd:
-            changed_raw[k] = {"type": a[k]["type"], "props": pd}
+        delta = _diff_props(snap_a[key]["props"], snap_b[key]["props"])
+        if not delta:
+            continue
+        typ  = snap_b[key]["type"]
+        name = snap_b[key]["props"]["name"]
+        changed.setdefault(typ, {})[name] = delta
 
-    return {
-        "added":   _group_by_type(added_raw),
-        "removed": _group_by_type(removed_raw),
-        "changed": _group_by_type(changed_raw),
-    }
+    added   = _group_by_type(added_keys,   snap_b, with_payload=False)
+    removed = _group_by_type(removed_keys, snap_a, with_payload=False)
+
+    return {"added": added, "removed": removed, "changed": changed}
+
 
 # -----------------------------------------------------------------------------
 # 4. Public API
