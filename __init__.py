@@ -40,67 +40,77 @@ class BlendDiffProperties(PropertyGroup):
 
 # --- UI Panel ---
 class BLENDDIFF_PT_MainPanel(Panel):
-    bl_label = "BlendDiff"
-    bl_idname = "BLENDDIFF_PT_main"
-    bl_space_type = 'VIEW_3D'
+    bl_label       = "BlendDiff"
+    bl_idname      = "BLENDDIFF_PT_main"
+    bl_space_type  = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'BlendDiff'
+    bl_category    = 'BlendDiff'
 
     def draw(self, context):
         layout = self.layout
-        wm = context.window_manager
+        wm     = context.window_manager
 
-        layout.prop(wm, "compare_filepath")
-        layout.operator("blenddiff.compare")
+        layout.prop(wm, "compare_filepath", text="File to compare")
+        layout.operator("blenddiff.compare", icon='VIEWZOOM')
+
 
 # --- Operator to run diff ---
 class BLENDDIFF_OT_Compare(Operator):
-    bl_idname = "blenddiff.compare"
-    bl_label = "Compare and Highlight"
-    bl_description = "Compare current scene with the selected .blend file"
+    bl_idname      = "blenddiff.compare"
+    bl_label       = "Compare & Highlight"
+    bl_description = "Compare current .blend with selected file and select changed objects"
+
+    def _validate_path(self, compare_path) -> str | None:
+        """Return absolute path or None and set self.report error."""
+        if not compare_path:
+            self.report({'ERROR'}, "No comparison file selected.")
+            return None
+
+        # Resolve relative path ("//") against current file
+        base = os.path.dirname(bpy.data.filepath)
+        if compare_path.startswith("//"):
+            compare_path = compare_path[2:]
+        abs_path = os.path.abspath(os.path.join(base, compare_path))
+
+        if not abs_path.lower().endswith(".blend"):
+            self.report({'ERROR'}, "Selected file is not a .blend file.")
+            return None
+        if not os.path.isfile(abs_path):
+            self.report({'ERROR'}, f"File does not exist:\n{abs_path}")
+            return None
+        return abs_path
 
     def execute(self, context):
         wm = context.window_manager
-        compare_filepath = wm.compare_filepath
 
-        # Must be saved and clean
+        # Ensure current file is saved & clean
         if not bpy.data.filepath:
             self.report({'ERROR'}, "Please save the current file before comparing.")
             return {'CANCELLED'}
-
         if bpy.data.is_dirty:
             self.report({'ERROR'}, "Please save or revert changes before comparing.")
             return {'CANCELLED'}
 
-        # Resolve relative path using the current file's directory as base
-        base_path = os.path.dirname(bpy.data.filepath)
-        rel_path = wm.compare_filepath
-        if rel_path.startswith("//"):
-            rel_path = rel_path[2:]
-        target = os.path.abspath(os.path.join(base_path, rel_path))
-
-        if not os.path.exists(target):
-            self.report({'ERROR'}, f"File does not exist: {target}")
+        target = self._validate_path(wm.compare_filepath)
+        if not target:
             return {'CANCELLED'}
 
         diff = blenddiff.diff_current_vs_file(target)
-
         if "error" in diff:
             self.report({'ERROR'}, f"Diff failed: {diff['error']} ({diff.get('stage')})")
             return {'CANCELLED'}
 
-        # Deselect all
+        # ------------------------------------------------------------------
+        # Highlight changed objects
         bpy.ops.object.select_all(action='DESELECT')
 
-        # Select changed objects (only top-level objects)
-        for idstr in diff.get("changed", {}):
-            if idstr.startswith("Object:"):
-                name = idstr.split(":", 1)[1]
-                obj = bpy.data.objects.get(name)
-                if obj:
-                    obj.select_set(True)
+        obj_changes = diff.get("changed", {}).get("Object", {})
+        for obj_name in obj_changes.keys():
+            obj = bpy.data.objects.get(obj_name)
+            if obj:
+                obj.select_set(True)
 
-        self.report({'INFO'}, f"{len(diff.get('changed', {}))} items changed.")
+        self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
         return {'FINISHED'}
 
 # --- Register ---
