@@ -25,15 +25,20 @@ from typing import Dict, Any
 
 LOG = logging.getLogger("blenddiff")
 
+_cache = None
+
 # -----------------------------------------------------------------------------
 # 1. Configuration
-SKIP_PATHS = {
+SKIP_IDB_COLLS = {"batch_remove", "bl_rna", "filepath", "is_dirty", "is_saved", "orphans_purge", "rna_type", "temp_data", "user_map", "window_managers", "workspaces"}
+
+SKIP_RNA_PATHS = {
     # heavy payloads
     ".vertices", ".edges", ".loops", ".polygons",
     ".pixels",   ".tiles",
     # runtime-only / noise
     ".matrix_world", ".rna_type",
 }
+
 PRIMITIVE_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}
 
 # -----------------------------------------------------------------------------
@@ -58,7 +63,7 @@ def _walk_rna(rna_obj, base="") -> Dict[str, Any]:
         if prop.is_readonly or prop.identifier == "rna_type":
             continue
         path = f"{base}.{prop.identifier}" if base else prop.identifier
-        if any(path.endswith(s) for s in SKIP_PATHS):
+        if any(path.endswith(s) for s in SKIP_RNA_PATHS):
             continue
         try:
             raw = getattr(rna_obj, prop.identifier)
@@ -93,7 +98,7 @@ def _walk_rna(rna_obj, base="") -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 # 3. Identity & snapshot helpers
 
-def _snap_datablock(idb: bpy.types.ID) -> Dict[str, Any]:
+def _hash_datablock(idb: bpy.types.ID) -> Dict[str, Any]:
     props = _walk_rna(idb)
     props.setdefault("name", idb.name_full)
     h = hashlib.blake2s()
@@ -112,22 +117,29 @@ def _identity_key(idb: bpy.types.ID, block: Dict[str, Any], id_prop: str | None)
 
 
 def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
-    snap: Dict[str, Any] = {}
-    for coll_name in dir(bpy.data):
-        coll = getattr(bpy.data, coll_name)
-        if not hasattr(coll, "__iter__"):
+    """Create a dict of hashes for non-excluded datablocks."""
+    snapshot: Dict[str, Any] = {}
+    filtered_names = [name for name in dir(bpy.data) if not name.startswith("__") and not name in SKIP_IDB_COLLS]
+    for coll_name in filtered_names:
+        collection = getattr(bpy.data, coll_name)
+        if not hasattr(collection, "__iter__"): # Only use iterable collections
+            LOG.debug(f'Snapshot: Skipping bpy.data.{coll_name}')
             continue
-        for idb in coll:
+        for idb in collection: # Only use named and unliked internal data blocks 
+            LOG.debug(f'Snapshot: Inspecting bpy.data.{coll_name}')
             if not hasattr(idb, "name_full"):
+                LOG.debug(f'Snapshot: Rejected block {idb} in bpy.data.{coll_name} with no \'name_full\' attribute.')
                 continue
             if ignore_linked and getattr(idb, "library", None):
+                LOG.debug(f'Snapshot: Rejected block {idb} in bpy.data.{coll_name} with \'library\' attribute.')
                 continue
-            block = _snap_datablock(idb)
-            key = _identity_key(idb, block, id_prop)
-            if key in snap:
+            LOG.debug(f'Snapshot: Including block {idb.name_full} in bpy.data.{coll_name}')
+            block_hash = _hash_datablock(idb)
+            key = _identity_key(idb, block_hash, id_prop)
+            if key in snapshot:
                 key = f"{key}:{idb.name_full}"
-            snap[key] = block
-    return snap
+            snapshot[key] = block_hash
+    return snapshot
 
 
 def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True):
@@ -167,7 +179,7 @@ def _group_by_type(items, snap_src, with_payload=False):
     return buckets
 
 
-def _diff_snap(snap_a, snap_b):
+def _diff_snapshots(snap_a, snap_b):
     """
     Produce a dict grouped by datablock type, e.g.
 
@@ -202,21 +214,26 @@ def diff_blend_files(path_a: str, path_b: str, *, id_prop: str | None = None):
     try:
         sA = _snapshot_file(path_a, id_prop)
         sB = _snapshot_file(path_b, id_prop)
-        return _diff_snap(sA, sB)
+        return _diff_snapshots(sA, sB)
     except MemoryError:
         return {"error": "MemoryError", "stage": "snapshot"}
 
 
 def diff_current_vs_file(path: str, *, id_prop: str | None = None):
     try:
+        _cache = None
         orig = bpy.data.filepath
         sCur = _snapshot_current(id_prop)
         sNew = _snapshot_file(path, id_prop)
         if orig:
             bpy.ops.wm.open_mainfile(filepath=orig, load_ui=False)
-        return _diff_snap(sCur, sNew)
+        _cache = _diff_snapshots(sCur, sNew)
+        return _cache
     except MemoryError:
         return {"error": "MemoryError", "stage": "snapshot"}
+    
+def get_diff_cache():
+    return _cache
 
 # -----------------------------------------------------------------------------
 # 5. CLI entry‑point
