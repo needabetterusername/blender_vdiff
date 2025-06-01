@@ -33,10 +33,10 @@ SKIP_IDB_COLLS = {"batch_remove", "bl_rna", "filepath", "is_dirty", "is_saved", 
 
 SKIP_RNA_PATHS = {
     # heavy payloads
-    ".vertices", ".edges", ".loops", ".polygons",
-    ".pixels",   ".tiles",
+    "vertices", "edges", "loops", "polygons",
+    "pixels",   "tiles",
     # runtime-only / noise
-    ".matrix_world", ".rna_type",
+    "matrix_world", "rna_type",
 }
 
 PRIMITIVE_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}
