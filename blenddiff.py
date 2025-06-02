@@ -129,7 +129,7 @@ def _identity_key(idb: bpy.types.ID, block: Dict[str, Any], id_prop: str | None)
 
 
 def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
-    """Create a dict of hashes for non-excluded datablocks."""
+    # Create a dict of hashes for non-excluded datablocks.
     snapshot: Dict[str, Any] = {}
     filtered_names = [name for name in dir(bpy.data) if not name.startswith("__") and not name in SKIP_IDB_COLLS]
     for coll_name in filtered_names:
@@ -159,7 +159,7 @@ def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True)
     return _snapshot_current(id_prop, ignore_linked=ignore_linked)
 
 # -----------------------------------------------------------------------------
-# 3. Diff helpers  (replace the entire old block with this one)
+# 3. Diff helpers 
 
 def _safe_cmp(a, b):
     try:
@@ -169,7 +169,7 @@ def _safe_cmp(a, b):
 
 
 def _diff_props(pa, pb):
-    """Return a dict of property deltas."""
+    # Return a dict of property deltas.
     out: Dict[str, Any] = {}
     for k in pa.keys() | pb.keys():
         if _safe_cmp(pa.get(k), pb.get(k)):
@@ -178,10 +178,10 @@ def _diff_props(pa, pb):
 
 
 def _group_by_type(items, snap_src, with_payload=False):
-    """
-    Turn an iterable of identity-keys into:
-        { "Object": { "Cube": payload_or_{} , ... } , ... }
-    """
+    #
+    # Turn an iterable of identity-keys into:
+    #     { "Object": { "Cube": payload_or_{} , ... } , ... }
+    #
     buckets: Dict[str, Dict[str, Any]] = {}
     for key in items:
         block = snap_src[key]
@@ -192,12 +192,13 @@ def _group_by_type(items, snap_src, with_payload=False):
 
 
 def _diff_snapshots(snap_a, snap_b):
-    """
-    Produce a dict grouped by datablock type, e.g.
-
-      "added":   { "Object": { "Cube.001": {} }, ... }
-      "changed": { "Object": { "Cube": {<prop-diff>} } }
-    """
+    # 
+    # Produce a dict grouped by datablock type, e.g.
+    # 
+    #   "added":   { "Object": { "Cube.001": {} }, ... }
+    #   "changed": { "Object": { "Cube": {<prop-diff>} } }
+    #   "removed": { "Object": { "Cube": {<prop-diff>} } }
+    # 
     added_keys   = snap_b.keys() - snap_a.keys()
     removed_keys = snap_a.keys() - snap_b.keys()
 
@@ -223,6 +224,9 @@ def _diff_snapshots(snap_a, snap_b):
 # 4. Public API
 
 def diff_blend_files(path_a: str, path_b: str, *, id_prop: str | None = None):
+    """
+    Run a diff against authored objects in the provided two files.
+    """
     try:
         sA = _snapshot_file(path_a, id_prop)
         sB = _snapshot_file(path_b, id_prop)
@@ -232,6 +236,10 @@ def diff_blend_files(path_a: str, path_b: str, *, id_prop: str | None = None):
 
 
 def diff_current_vs_file(path: str, *, id_prop: str | None = None):
+    """
+    Run a diff against authored objects in the currently open file
+    against the provided file.
+    """
     try:
         _cache = None
         orig = bpy.data.filepath
