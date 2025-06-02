@@ -20,8 +20,22 @@
 # -----------------------------------------------------------------------------------
 
 from __future__ import annotations
-import bpy, sys, argparse, hashlib, json, logging, mathutils, numbers
+
+import os, sys, argparse, hashlib, json, logging, numbers
 from typing import Dict, Any
+
+USAGE = f"""This script must be run via Blender using:
+  blender --background --python {os.path.basename(__file__)} -- [args]
+
+NB: The extra \'--\' before [args] is mandatory. E.g. \"... -- --arg1\"
+
+"""
+try:
+    import bpy, mathutils
+except ImportError:
+    print("ImportError: " + USAGE)
+finally:
+    sys.exit(1)
 
 LOG = logging.getLogger("blenddiff")
 
@@ -99,6 +113,7 @@ def _walk_rna(rna_obj, base="") -> Dict[str, Any]:
 # 3. Identity & snapshot helpers
 
 def _hash_datablock(idb: bpy.types.ID) -> Dict[str, Any]:
+    # Generate a hash of a datablock's content for the purpose of change detection.
     props = _walk_rna(idb)
     props.setdefault("name", idb.name_full)
     h = hashlib.blake2s()
@@ -117,7 +132,7 @@ def _identity_key(idb: bpy.types.ID, block: Dict[str, Any], id_prop: str | None)
 
 
 def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
-    """Create a dict of hashes for non-excluded datablocks."""
+    # Create a dict of hashes for non-excluded datablocks.
     snapshot: Dict[str, Any] = {}
     filtered_names = [name for name in dir(bpy.data) if not name.startswith("__") and not name in SKIP_IDB_COLLS]
     for coll_name in filtered_names:
@@ -147,7 +162,7 @@ def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True)
     return _snapshot_current(id_prop, ignore_linked=ignore_linked)
 
 # -----------------------------------------------------------------------------
-# 3. Diff helpers  (replace the entire old block with this one)
+# 3. Diff helpers 
 
 def _safe_cmp(a, b):
     try:
@@ -189,7 +204,7 @@ def _diff_snapshots(snap_a, snap_b):
     added_keys   = snap_b.keys() - snap_a.keys()
     removed_keys = snap_a.keys() - snap_b.keys()
 
-    # changed ---------------------------------------------------------------
+    # CAR Detection-----------------------------------------------------------
     changed: Dict[str, Dict[str, Any]] = {}
     for key in snap_a.keys() & snap_b.keys():
         if snap_a[key]["hash"] == snap_b[key]["hash"]:
@@ -240,9 +255,14 @@ def get_diff_cache():
 
 def _cli():
     if "--" not in sys.argv:
+        print("Error: Failed to parse arguments." + USAGE)
         return
     argv = sys.argv[sys.argv.index("--") + 1:]
-    ap = argparse.ArgumentParser()
+
+    ap = argparse.ArgumentParser(
+        description="Compare two Blender files and output the diff.",
+        prog="blender --python yourscript.py --"
+    )
     ap.add_argument("--fileA", required=True)
     ap.add_argument("--fileB", required=True)
     ap.add_argument("--idprop")
@@ -250,13 +270,23 @@ def _cli():
     grp.add_argument("--out")
     grp.add_argument("--stdout", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
-    args = ap.parse_args(argv)
+
+    # try:
+    #     args = ap.parse_args(argv)
+    # except SystemExit as e:
+    #     # argparse has printed to stderr — capture usage again and print to stdout
+    #     print("\nERROR: Argument parsing failed.", file=sys.stdout)
+    #     print("Usage:", file=sys.stdout)
+    #     print(ap.format_usage(), file=sys.stdout)
+    #     print("Use '--fileA' and '--fileB' to specify the input .blend files.", file=sys.stdout)
+    #     return e.code
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s: %(message)s")
 
     diff = diff_blend_files(args.fileA, args.fileB, id_prop=args.idprop)
     payload = json.dumps(diff, indent=2)
+
     if args.stdout or not args.out:
         print(payload)
     if args.out:
@@ -266,4 +296,10 @@ def _cli():
 
 
 if __name__ == "__main__":
-    _cli()
+    #_cli()
+    import pathlib
+    #log = pathlib.Path.home() / "blender_diff_%s.log" % datetime.datetime.now().isoformat()
+    #sys.stderr = sys.stdout = open(log, "w", encoding="utf-8")
+    logging.basicConfig(level=logging.DEBUG,
+                        format="%(levelname)s: %(message)s")
+    LOG.debug("Hello")
