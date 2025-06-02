@@ -129,9 +129,9 @@ def _identity_key(idb: bpy.types.ID, block: Dict[str, Any], id_prop: str | None)
 
 
 def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
-    # Create a dict of hashes for non-excluded datablocks.
+    # Create a dict of hashes for non-excluded datablocks in the currently open file.
     snapshot: Dict[str, Any] = {}
-    filtered_names = [name for name in dir(bpy.data) if not name.startswith("__") and not name in SKIP_IDB_COLLS]
+    filtered_names = [coll_name for coll_name in dir(bpy.data) if not coll_name.startswith("__") and not coll_name in SKIP_IDB_COLLS]
     for coll_name in filtered_names:
         collection = getattr(bpy.data, coll_name)
         if not hasattr(collection, "__iter__"): # Only use iterable collections
@@ -147,6 +147,7 @@ def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
                 continue
             LOG.debug(f'Snapshot: Including block {idb.name_full} in bpy.data.{coll_name}')
             block_hash = _hash_datablock(idb)
+            block_hash.setdefault("bpy_path", coll_name)
             key = _identity_key(idb, block_hash, id_prop)
             if key in snapshot:
                 key = f"{key}:{idb.name_full}"
@@ -155,6 +156,7 @@ def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
 
 
 def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True):
+    # Load the target file as the current file then snapshot.
     bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
     return _snapshot_current(id_prop, ignore_linked=ignore_linked)
 
@@ -177,18 +179,19 @@ def _diff_props(pa, pb):
     return out
 
 
-def _group_by_type(items, snap_src, with_payload=False):
+def _group_by_type(item_dict, src_dict, with_payload=False):
     #
     # Turn an iterable of identity-keys into:
     #     { "Object": { "Cube": payload_or_{} , ... } , ... }
     #
-    buckets: Dict[str, Dict[str, Any]] = {}
-    for key in items:
-        block = snap_src[key]
-        typ   = block["type"]
+    groups: Dict[str, Dict[str, Any]] = {}
+    for key in item_dict:
+        block = src_dict[key]
+        #type  = block["type"] #Change this to use collection name
+        type = block.get("bpy_path","Other")
         name  = block["props"]["name"]
-        buckets.setdefault(typ, {})[name] = block if with_payload else {}
-    return buckets
+        groups.setdefault(type, {})[name] = block if with_payload else {}
+    return groups
 
 
 def _diff_snapshots(snap_a, snap_b):
@@ -210,9 +213,10 @@ def _diff_snapshots(snap_a, snap_b):
         delta = _diff_props(snap_a[key]["props"], snap_b[key]["props"])
         if not delta:
             continue
-        typ  = snap_b[key]["type"]
+        #type  = snap_b[key]["type"]
+        type = snap_b[key]["bpy_path"]
         name = snap_b[key]["props"]["name"]
-        changed.setdefault(typ, {})[name] = delta
+        changed.setdefault(type, {})[name] = delta
 
     added   = _group_by_type(added_keys,   snap_b, with_payload=False)
     removed = _group_by_type(removed_keys, snap_a, with_payload=False)
