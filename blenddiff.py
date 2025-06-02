@@ -21,21 +21,19 @@
 
 from __future__ import annotations
 
-import os, sys, argparse, hashlib, json, logging, numbers
-from typing import Dict, Any
-
+import os, sys
 USAGE = f"""This script must be run via Blender using:
   blender --background --python {os.path.basename(__file__)} -- [args]
-
 NB: The extra \'--\' before [args] is mandatory. E.g. \"... -- --arg1\"
-
 """
 try:
     import bpy, mathutils
 except ImportError:
     print("ImportError: " + USAGE)
-finally:
     sys.exit(1)
+
+import argparse, hashlib, json, logging, numbers
+from typing import Dict, Any
 
 LOG = logging.getLogger("blenddiff")
 
