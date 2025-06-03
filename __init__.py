@@ -12,14 +12,18 @@ bl_info = {
     "tracker_url": ""
 }
 
+import os, sys, logging, json
+
 import bpy
-import os
 from bpy.props import StringProperty
 from bpy.types import AddonPreferences, Panel, Operator, PropertyGroup
 from bpy.app.handlers import persistent
 
-# Ensure blenddiff.py is in the same folder as this __init__.py
 from . import blenddiff
+
+LOG = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG,
+                    format="%(levelname)s: %(message)s")
 
 @persistent
 def update_compare_filepath(dummy):
@@ -96,6 +100,7 @@ class BLENDDIFF_OT_Compare(Operator):
             return {'CANCELLED'}
 
         diff = blenddiff.diff_current_vs_other(target)
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got JSON diff:\n{json.dumps(diff, indent=2)}')
         if "error" in diff:
             self.report({'ERROR'}, f"Diff failed: {diff['error']} ({diff.get('stage')})")
             return {'CANCELLED'}
