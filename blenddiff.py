@@ -241,7 +241,7 @@ def diff_blend_files(path_original: str, path_modified: str, *, id_prop: str | N
         return {"error": "MemoryError", "stage": "snapshot"}
 
 
-def diff_current_vs_original(path_other: str, *, reverse: bool = False, id_prop: str | None = None):
+def diff_current_vs_other(path_other: str, *, reverse: bool = False, id_prop: str | None = None):
     """
     This method is intended to be run interactively from the Blender addon's UI.
 
