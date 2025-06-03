@@ -95,7 +95,7 @@ class BLENDDIFF_OT_Compare(Operator):
         if not target:
             return {'CANCELLED'}
 
-        diff = blenddiff.diff_current_vs_file(target)
+        diff = blenddiff.diff_current_vs_other(target)
         if "error" in diff:
             self.report({'ERROR'}, f"Diff failed: {diff['error']} ({diff.get('stage')})")
             return {'CANCELLED'}
