@@ -1,11 +1,11 @@
 bl_info = {
     "name": "vDiff",
     "author": "Chris Margach",
-    "description": "",
+    "description": "Visual Diff for Blender",
     "blender": (2, 80, 0),
     "version": (0, 0, 1),
     "category": "System",
-    "location": "Viewport -> Navigator -> ",
+    "location": "Viewport -> Navigator -> vDiff",
     "description": "Compare current scene to another .blend file and highlight new and modified objects.",
     "warning": "",
     "doc_url": "",
@@ -34,7 +34,7 @@ def update_compare_filepath(dummy):
         wm.compare_filepath = ""
 
 # --- Storage for file path ---
-class BlendDiffProperties(PropertyGroup):
+class VDIFF_PG_Properties(PropertyGroup):
     compare_filepath: StringProperty(
         name="Compare File",
         description="Path to the .blend file to compare with",
@@ -42,10 +42,12 @@ class BlendDiffProperties(PropertyGroup):
         default=""
     )
 
+
+
 # --- UI Panel ---
-class BLENDDIFF_PT_MainPanel(Panel):
+class VDIFF_PT_MainPanel(Panel):
     bl_label       = "Blender vDiff"
-    bl_idname      = "BLENDDIFF_PT_main"
+    bl_idname      = "VDIFF_PT_main"
     bl_space_type  = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category    = 'vDiff'
@@ -55,12 +57,12 @@ class BLENDDIFF_PT_MainPanel(Panel):
         wm     = context.window_manager
 
         layout.prop(wm, "compare_filepath", text="File to compare")
-        layout.operator("blenddiff.compare", icon='VIEWZOOM')
+        layout.operator("vdiff.compare", icon='VIEWZOOM')
 
 
 # --- Operator to run diff ---
-class BLENDDIFF_OT_Compare(Operator):
-    bl_idname      = "blenddiff.compare"
+class VDIFF_OT_Compare(Operator):
+    bl_idname      = "vdiff.compare"
     bl_label       = "Compare & Highlight"
     bl_description = "Compare current .blend with selected file and select changed objects"
 
@@ -124,9 +126,9 @@ class BLENDDIFF_OT_Compare(Operator):
 
 # --- Register ---
 classes = (
-    BlendDiffProperties,
-    BLENDDIFF_PT_MainPanel,
-    BLENDDIFF_OT_Compare,
+    VDIFF_PG_Properties,
+    VDIFF_PT_MainPanel,
+    VDIFF_OT_Compare,
 )
 
 def register():
