@@ -59,6 +59,35 @@ class VDIFF_PT_MainPanel(Panel):
         layout.prop(wm, "compare_filepath", text="File to compare")
         layout.operator("vdiff.compare", icon='VIEWZOOM')
 
+# --- UI Panel ---
+class VDIFF_OT_warning_popup(bpy.types.Operator):
+    bl_idname = "wm.long_warning_popup"
+    bl_label = "Disabled Items Warning"
+    bl_description = "Some items are disabled. Review the list below."
+
+    items_json: bpy.props.StringProperty() #JSON
+
+    def draw(self, context):
+        layout = self.layout
+        items = json.loads(self.items_json)
+        box = layout.box()
+        col = box.column()
+
+        # Scrollable area: limit visible height
+        row = col.row()
+        row.label(text=f"{len(items)} items disabled:")
+
+        scroll = col.column()
+        scroll.scale_y = 5  # ← increases visible scroll area
+        for item in items:
+            scroll.label(text=item)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_popup(self, width=400)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
 
 # --- Operator to run diff ---
 class VDIFF_OT_Compare(Operator):
@@ -86,7 +115,7 @@ class VDIFF_OT_Compare(Operator):
             return None
         return abs_path
 
-    def execute(self, context):
+    def invoke(self, context, event):
         wm = context.window_manager
 
         # Ensure current file is saved & clean
@@ -126,24 +155,31 @@ class VDIFF_OT_Compare(Operator):
             object = context.scene.objects.get(object_name,None)
             if object:
                 if getattr(object,"hide_select",False):
-                    select_disabled.append(object)
+                    select_disabled.append(object.name)
                 else:
                     object.select_set(True)
 
         if select_disabled:
-            list_str = ""
-            for idb in select_disabled:
-                list_str += f'{idb.name}\n'
-            self.report({'WARNING'}, f'Selection of the following items is disabled in their properties:\n{list_str}')
+            data = json.dumps(select_disabled)
 
+            def _show_popup():
+                bpy.ops.wm.long_warning_popup('INVOKE_DEFAULT', items_json=data)
+                return None          # unregister the timer
+
+            bpy.app.timers.register(_show_popup, first_interval=0.0)
 
         #self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
         return {'FINISHED'}
+
+    def execute(self, context):
+        # Optional: if you need to support 'Run' via search menu
+        return self.invoke(context, None)
 
 # --- Register ---
 classes = (
     VDIFF_PG_Properties,
     VDIFF_PT_MainPanel,
+    VDIFF_OT_warning_popup,
     VDIFF_OT_Compare,
 )
 
