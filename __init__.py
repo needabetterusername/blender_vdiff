@@ -59,34 +59,48 @@ class VDIFF_PT_MainPanel(Panel):
         layout.prop(wm, "compare_filepath", text="File to compare")
         layout.operator("vdiff.compare", icon='VIEWZOOM')
 
-# --- UI Panel ---
+import bpy, json
+
+# --- UI Operator ---
 class VDIFF_OT_warning_popup(bpy.types.Operator):
     bl_idname = "wm.long_warning_popup"
-    bl_label = "Disabled Items Warning"
-    bl_description = "Some items are disabled. Review the list below."
+    bl_label  = "Unselectable Items Warning"
+    bl_description = "Warns of scene items which could not be auto-selected."
 
-    items_json: bpy.props.StringProperty() #JSON
+    # keep the JSON off-screen so the dialog only shows what *you* draw
+    items_json: bpy.props.StringProperty(options={'HIDDEN'})
 
+    # ---- draw the dialog body --------------------------------------------
     def draw(self, context):
         layout = self.layout
-        items = json.loads(self.items_json)
-        box = layout.box()
-        col = box.column()
+        items  = json.loads(self.items_json)
 
-        # Scrollable area: limit visible height
-        row = col.row()
-        row.label(text=f"{len(items)} items disabled:")
+        col = layout.column()
+        col.label(text=f"{len(items)} item(s) select-disabled:", icon='ERROR')
 
-        scroll = col.column()
-        scroll.scale_y = 5  # ← increases visible scroll area
-        for item in items:
-            scroll.label(text=item)
+        # scrollable area
+        scroll = col.box()
+        col.ui_units_y = 7
+        for name in items:
+            scroll.label(text=name)
 
+    # ---- invoke: use *props dialog* instead of plain popup ----------------
     def invoke(self, context, event):
-        return context.window_manager.invoke_popup(self, width=400)
+        # invoke_props_dialog gives a header + OK / Cancel buttons
+        return context.window_manager.invoke_props_dialog(self, width=400)
 
+    # ---- what to do after the user presses OK -----------------------------
     def execute(self, context):
+        # nothing special to run – we just wanted confirmation
         return {'FINISHED'}
+
+# --------------------------------------------------------------------------
+def register():
+    bpy.utils.register_class(VDIFF_OT_warning_popup)
+
+def unregister():
+    bpy.utils.unregister_class(VDIFF_OT_warning_popup)
+
 
 
 # --- Operator to run diff ---
