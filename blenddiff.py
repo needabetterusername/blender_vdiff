@@ -194,7 +194,7 @@ def _group_by_type(item_dict, src_dict, with_payload=False):
     return groups
 
 
-def _diff_snapshots(snap_a, snap_b):
+def _diff_snapshots(snap_original, snap_modified):
     # 
     # Produce a dict grouped by datablock type, e.g.
     # 
@@ -202,24 +202,24 @@ def _diff_snapshots(snap_a, snap_b):
     #   "changed": { "Object": { "Cube": {<prop-diff>} } }
     #   "removed": { "Object": { "Cube": {<prop-diff>} } }
     # 
-    added_keys   = snap_b.keys() - snap_a.keys()
-    removed_keys = snap_a.keys() - snap_b.keys()
+    added_keys   = snap_modified.keys() - snap_original.keys()
+    removed_keys = snap_original.keys() - snap_modified.keys()
 
     # changed ---------------------------------------------------------------
     changed: Dict[str, Dict[str, Any]] = {}
-    for key in snap_a.keys() & snap_b.keys():
-        if snap_a[key]["hash"] == snap_b[key]["hash"]:
+    for key in snap_original.keys() & snap_modified.keys():
+        if snap_original[key]["hash"] == snap_modified[key]["hash"]:
             continue
-        delta = _diff_props(snap_a[key]["props"], snap_b[key]["props"])
+        delta = _diff_props(snap_original[key]["props"], snap_modified[key]["props"])
         if not delta:
             continue
         #type  = snap_b[key]["type"]
-        type = snap_b[key]["bpy_path"]
-        name = snap_b[key]["props"]["name"]
+        type = snap_modified[key]["bpy_path"]
+        name = snap_modified[key]["props"]["name"]
         changed.setdefault(type, {})[name] = delta
 
-    added   = _group_by_type(added_keys,   snap_b, with_payload=False)
-    removed = _group_by_type(removed_keys, snap_a, with_payload=False)
+    added   = _group_by_type(added_keys,   snap_modified, with_payload=False)
+    removed = _group_by_type(removed_keys, snap_original, with_payload=False)
 
     return {"added": added, "removed": removed, "changed": changed}
 
@@ -227,31 +227,38 @@ def _diff_snapshots(snap_a, snap_b):
 # -----------------------------------------------------------------------------
 # 4. Public API
 
-def diff_blend_files(path_a: str, path_b: str, *, id_prop: str | None = None):
+def diff_blend_files(path_original: str, path_modified: str, *, id_prop: str | None = None):
     """
+    This method is intended to be run in the background from the CLI or as a subprocess.
+
     Run a diff against authored objects in the provided two files.
     """
     try:
-        sA = _snapshot_file(path_a, id_prop)
-        sB = _snapshot_file(path_b, id_prop)
-        return _diff_snapshots(sA, sB)
+        snap_orig = _snapshot_file(path_original, id_prop)
+        snap_mod = _snapshot_file(path_modified, id_prop)
+        return _diff_snapshots(snap_orig, snap_mod)
     except MemoryError:
         return {"error": "MemoryError", "stage": "snapshot"}
 
 
-def diff_current_vs_file(path: str, *, id_prop: str | None = None):
+def diff_current_vs_original(path_other: str, *, reverse: bool = False, id_prop: str | None = None):
     """
-    Run a diff against authored objects in the currently open file
-    against the provided file.
+    This method is intended to be run interactively from the Blender addon's UI.
+
+    Run a diff against authored objects in the currently open modified file
+    against the provided original file.
+
+    Setting reverse=True will reverse the direction of the diff. I.e. current file
+    will be treated as the original and the other file will be treated as the modified one.
     """
     try:
         _cache = None
-        orig = bpy.data.filepath
-        sCur = _snapshot_current(id_prop)
-        sNew = _snapshot_file(path, id_prop)
-        if orig:
-            bpy.ops.wm.open_mainfile(filepath=orig, load_ui=False)
-        _cache = _diff_snapshots(sCur, sNew)
+        current_filepath = bpy.data.filepath
+        snap_current = _snapshot_current(id_prop)
+        snap_other   = _snapshot_file(path_other, id_prop)
+        if current_filepath:
+            bpy.ops.wm.open_mainfile(filepath=current_filepath, load_ui=False)
+        _cache = _diff_snapshots(snap_current, snap_other) if not reverse else _diff_snapshots(snap_other, snap_current)
         return _cache
     except MemoryError:
         return {"error": "MemoryError", "stage": "snapshot"}
@@ -267,9 +274,9 @@ def _cli():
         return
     argv = sys.argv[sys.argv.index("--") + 1:]
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fileA", required=True)
-    ap.add_argument("--fileB", required=True)
-    ap.add_argument("--idprop")
+    ap.add_argument("--file-original", required=True)
+    ap.add_argument("--file-modified", required=True)
+    ap.add_argument("--id-prop")
     grp = ap.add_mutually_exclusive_group()
     grp.add_argument("--out")
     grp.add_argument("--stdout", action="store_true")
@@ -279,7 +286,7 @@ def _cli():
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s: %(message)s")
 
-    diff = diff_blend_files(args.fileA, args.fileB, id_prop=args.idprop)
+    diff = diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
     payload = json.dumps(diff, indent=2)
     if args.stdout or not args.out:
         print(payload)
