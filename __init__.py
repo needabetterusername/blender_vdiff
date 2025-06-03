@@ -108,18 +108,34 @@ class VDIFF_OT_Compare(Operator):
             return {'CANCELLED'}
 
         # ------------------------------------------------------------------
-        # Highlight changed objects
+        # Create report
+        changed = diff.get("changed", {})
+        added = diff.get("added",{})
+
+        # ------------------------------------------------------------------
+        # Highlight scene objects
         bpy.ops.object.select_all(action='DESELECT')
 
-        changed = diff.get("changed", {})
-        for group in changed.keys():
-            LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got change group {group}')
-            idb_dict = getattr(bpy.data, group)
-            if idb_dict:
-                LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got idb dict for change group {group}')
-                for idb in idb_dict:
-                    LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got idb {getattr(idb, "name")}')
-                    idb.select_set(True)
+        # Only objects can be selected
+        changed_selectable = changed.get("objects",{})
+        added_selectable = added.get("objects",{})
+        selectable = list(changed_selectable.keys()) + list(added_selectable.keys())
+
+        select_disabled = []
+        for object_name in selectable:
+            object = context.scene.objects.get(object_name,None)
+            if object:
+                if getattr(object,"hide_select",False):
+                    select_disabled.append(object)
+                else:
+                    object.select_set(True)
+
+        if select_disabled:
+            list_str = ""
+            for idb in select_disabled:
+                list_str += f'{idb.name}\n'
+            self.report({'WARNING'}, f'Selection of the following items is disabled in their properties:\n{list_str}')
+
 
         #self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
         return {'FINISHED'}
