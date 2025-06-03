@@ -109,11 +109,15 @@ class BLENDDIFF_OT_Compare(Operator):
         # Highlight changed objects
         bpy.ops.object.select_all(action='DESELECT')
 
-        obj_changes = diff.get("changed", {}).get("Object", {})
-        for obj_name in obj_changes.keys():
-            obj = bpy.data.objects.get(obj_name)
-            if obj:
-                obj.select_set(True)
+        changed = diff.get("changed", {})
+        for group in changed.keys():
+            LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got change group {group}')
+            idb_dict = getattr(bpy.data, group)
+            if idb_dict:
+                LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got idb dict for change group {group}')
+                for idb in idb_dict:
+                    LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got idb {getattr(idb, "name")}')
+                    idb.select_set(True)
 
         #self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
         return {'FINISHED'}
