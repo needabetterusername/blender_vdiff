@@ -44,11 +44,11 @@ class BlendDiffProperties(PropertyGroup):
 
 # --- UI Panel ---
 class BLENDDIFF_PT_MainPanel(Panel):
-    bl_label       = "BlendDiff"
+    bl_label       = "Blender vDiff"
     bl_idname      = "BLENDDIFF_PT_main"
     bl_space_type  = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category    = 'BlendDiff'
+    bl_category    = 'vDiff'
 
     def draw(self, context):
         layout = self.layout
@@ -115,7 +115,7 @@ class BLENDDIFF_OT_Compare(Operator):
             if obj:
                 obj.select_set(True)
 
-        self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
+        #self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
         return {'FINISHED'}
 
 # --- Register ---
