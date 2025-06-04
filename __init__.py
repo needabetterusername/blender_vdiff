@@ -17,6 +17,7 @@ import os, sys, logging, json
 import bpy
 from bpy.props import StringProperty
 from bpy.types import AddonPreferences, Panel, Operator, PropertyGroup
+from bpy.app import translations
 from bpy.app.handlers import persistent
 
 from . import blenddiff
@@ -59,48 +60,89 @@ class VDIFF_PT_MainPanel(Panel):
         layout.prop(wm, "compare_filepath", text="File to compare")
         layout.operator("vdiff.compare", icon='VIEWZOOM')
 
-import bpy, json
 
-# --- UI Operator ---
-class VDIFF_OT_warning_popup(bpy.types.Operator):
-    bl_idname = "wm.long_warning_popup"
-    bl_label  = "Unselectable Items Warning"
-    bl_description = "Warns of scene items which could not be auto-selected."
+# --- UI Dialog ---
+# helper: temporarily hide the word “Cancel”
+_cancel_overridden = False
 
-    # keep the JSON off-screen so the dialog only shows what *you* draw
-    items_json: bpy.props.StringProperty(options={'HIDDEN'})
+def _suppress_cancel_label():
+    """Override UI translation so the Cancel button’s label is empty."""
+    global _cancel_overridden
+    if _cancel_overridden:
+        return
+    # In the default UI context (“*”) replace “Cancel” with “”.
+    translations.register(__name__, {"*": {"Cancel": ""}})
+    _cancel_overridden = True
 
-    # ---- draw the dialog body --------------------------------------------
-    def draw(self, context):
-        layout = self.layout
-        items  = json.loads(self.items_json)
+def _restore_cancel_label():
+    global _cancel_overridden
+    if not _cancel_overridden:
+        return
+    translations.unregister(__name__)
+    _cancel_overridden = False
 
-        col = layout.column()
-        col.label(text=f"{len(items)} item(s) select-disabled:", icon='ERROR')
+# dummy OK operator
+class VDIFF_OT_confirm(bpy.types.Operator):
+    bl_idname  = "okonly.confirm"
+    bl_label   = "OK"
+    bl_options = {'INTERNAL'}
 
-        # scrollable area
-        scroll = col.box()
-        col.ui_units_y = 7
-        for name in items:
-            scroll.label(text=name)
-
-    # ---- invoke: use *props dialog* instead of plain popup ----------------
-    def invoke(self, context, event):
-        # invoke_props_dialog gives a header + OK / Cancel buttons
-        return context.window_manager.invoke_props_dialog(self, width=400)
-
-    # ---- what to do after the user presses OK -----------------------------
     def execute(self, context):
-        # nothing special to run – we just wanted confirmation
+        _restore_cancel_label()           # put the UI back to normal
         return {'FINISHED'}
 
-# --------------------------------------------------------------------------
-def register():
-    bpy.utils.register_class(VDIFF_OT_warning_popup)
+# dialog operator
+class VDIFF_OT_dialog(bpy.types.Operator):
+    """Persistent dialog that shows a list of strings and just an OK button"""
+    bl_idname  = "okonly.dialog"
+    bl_label   = "Warning - Disabled objects found in scene"
+    bl_options = {'INTERNAL'}
 
-def unregister():
-    bpy.utils.unregister_class(VDIFF_OT_warning_popup)
+    items_json: bpy.props.StringProperty(default="[]")
+    items_text: bpy.props.StringProperty()   # read-only display
 
+    def invoke(self, context, event):
+        # Prepare list text
+        try:
+            items = json.loads(self.items_json)
+        except Exception:
+            LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Exception while loading JSON for display.')
+            items = []
+        self.items_text = "\n".join(str(i) for i in items)
+
+        _suppress_cancel_label()  # hide “Cancel” *before* dialog is drawn
+
+        # Blender 4.x
+        if hasattr(bpy.types.UILayout, "template_popup_confirm"):
+            return context.window_manager.invoke_props_dialog(self, width=420)
+        # <= 3.6 LTS: fall back to regular props dialog
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text=f"The below scene items are disabled and cannot be highlighted.")
+        col = layout.column()
+        col.enabled = False                       # read-only
+        col.prop(self, "items_text", text="")    # multi-line, scrollable
+
+        if hasattr(layout, "template_popup_confirm"):
+            # Blender 4.x – override footer with our single OK button
+            layout.template_popup_confirm(
+                operator=VDIFF_OT_confirm.bl_idname,
+                text="OK",
+                cancel_text="",                   # <- no Cancel button
+            )
+        else:
+            # Blender 3.x – draw our own OK button; Cancel label is blank
+            row = layout.row()
+            row.operator(VDIFF_OT_confirm.bl_idname, text="OK").default = True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    # Make pressing Esc cleanly restore the translation override
+    def cancel(self, context):
+        _restore_cancel_label()
 
 
 # --- Operator to run diff ---
@@ -164,22 +206,23 @@ class VDIFF_OT_Compare(Operator):
         added_selectable = added.get("objects",{})
         selectable = list(changed_selectable.keys()) + list(added_selectable.keys())
 
-        select_disabled = []
+        disabled_objects = []
         for object_name in selectable:
             object = context.scene.objects.get(object_name,None)
             if object:
                 if getattr(object,"hide_select",False):
-                    select_disabled.append(object.name)
+                    disabled_objects.append(object)
                 else:
                     object.select_set(True)
 
-        if select_disabled:
-            data = json.dumps(select_disabled)
+        if disabled_objects:
+            object_names = [object.name for object in disabled_objects]
 
             def _show_popup():
-                bpy.ops.wm.long_warning_popup('INVOKE_DEFAULT', items_json=data)
+                #bpy.ops.wm.long_warning_popup('INVOKE_DEFAULT', items_json=data)
+                bpy.ops.okonly.dialog('INVOKE_DEFAULT', items_json=json.dumps(object_names))
                 return None          # unregister the timer
-
+             
             bpy.app.timers.register(_show_popup, first_interval=0.0)
 
         #self.report({'INFO'}, f"{len(obj_changes)} object(s) changed.")
@@ -193,7 +236,8 @@ class VDIFF_OT_Compare(Operator):
 classes = (
     VDIFF_PG_Properties,
     VDIFF_PT_MainPanel,
-    VDIFF_OT_warning_popup,
+    VDIFF_OT_confirm,
+    VDIFF_OT_dialog,
     VDIFF_OT_Compare,
 )
 
