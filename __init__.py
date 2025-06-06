@@ -46,14 +46,14 @@ def update_compare_filepath(dummy):
 
 #  helper: singular  ➜  plural
 _PLURALS = {
-    "workspace": "workspaces",
+    "mesh": "meshes",
 }
 
 def _plural(attr: str) -> str:
     # Return the corresponding collection name inside bpy.data
     return _PLURALS.get(attr, attr + "s")
 
-def get_screen_context(attrs=("scene", "workspace")):
+def get_screen_context(attrs=("scene", "workspace", "view_layer")):
     """Return a lightweight list describing the active datablocks for *attrs*."""
     win = bpy.context.window
     snapshot = []
@@ -67,21 +67,70 @@ def get_screen_context(attrs=("scene", "workspace")):
 
     return snapshot
 
+def resolve_snapshot_objects(snapshot):
+    """Resolve a snapshot list into a dict of actual bpy.data objects."""
+    resolved = {}
+    scene = None
+
+    # First, resolve all regular items and save the scene if present
+    for typename, (name, plural) in snapshot:
+        if typename == "view_layer":
+            continue  # defer view_layer handling
+        collection = getattr(bpy.data, plural, None)
+        if collection is None:
+            continue
+        obj = collection.get(name)
+        if obj:
+            resolved[typename] = obj
+            if typename == "scene":
+                scene = obj
+
+    # Handle view_layer specially
+    for typename, (name, plural) in snapshot:
+        if typename != "view_layer":
+            continue
+        if scene is None:
+            raise ValueError("Cannot resolve view_layer: scene not present in snapshot.")
+        view_layer = scene.view_layers.get(name)
+        if view_layer:
+            resolved[typename] = view_layer
+
+    return resolved
+
+
 #@persistent
 def set_screen_context(snapshot, win=None):
-    """Apply *snapshot* (as produced by get_window_context) to *win*."""
+    """Apply *snapshot* (as produced by get_screen_context) to *win*."""
     LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, re-setting context...')
     win = win or bpy.context.window
 
+    scene_obj = None  # cache the scene object for use with view layers
+
     for attr, (name, collection) in snapshot:
-        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, re-setting {attr}, {name}, {collection} for window={win}...')
-        datablock = getattr(bpy.data, collection, None)
-        if datablock is None:
-            continue
-        datablock = datablock.get(name)
-        if datablock is None:
-            continue
-        setattr(win, attr, datablock)
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Re-setting {attr}, {name}, {collection} for window={win}...')
+
+        if attr == "view_layer":
+            if scene_obj is None:
+                LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Skipping view_layer because scene not yet set.')
+                continue
+            view_layer = scene_obj.view_layers.get(name)
+            if view_layer:
+                setattr(win, attr, view_layer)
+            else:
+                LOG.warning(f'{__name__}.{sys._getframe(0).f_code.co_name}: View layer {name} not found in scene {scene_obj.name}.')
+        else:
+            datablock_collection = getattr(bpy.data, collection, None)
+            if not datablock_collection:
+                LOG.warning(f'{__name__}.{sys._getframe(0).f_code.co_name}: Datablock collection {collection} not found.')
+                continue
+            obj = datablock_collection.get(name)
+            if obj:
+                setattr(win, attr, obj)
+                if attr == "scene":
+                    scene_obj = obj
+            else:
+                LOG.warning(f'{__name__}.{sys._getframe(0).f_code.co_name}: {attr} named {name} not found in {collection}.')
+
 
 
 def top_level_excluded_collections(view_layer=None):
@@ -104,7 +153,7 @@ def top_level_excluded_collections(view_layer=None):
     return tops
 
 
-def objects_under_excluded(view_layer=None, unique=True):
+def objects_under_excluded_colls(view_layer=None, unique=True):
     """
     Return a list of all objects that belong to the *top-level* excluded
     LayerCollections of the given view-layer (recursively through children).
@@ -294,7 +343,7 @@ class VDIFF_OT_Compare(Operator):
             return {'CANCELLED'}
 
         # Save screen context state for restore after file change
-        snap = get_screen_context()
+        screen_context_snap = get_screen_context()
 
         # --- NOTE ---
         # The following function will change the main file. The effects of 
@@ -320,7 +369,7 @@ class VDIFF_OT_Compare(Operator):
             return {'CANCELLED'}
 
         # Restore Context
-        def _restore_context():
+        def _call_set_context():
             
             LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, inspecting context...')
 
@@ -333,45 +382,59 @@ class VDIFF_OT_Compare(Operator):
             LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, got window...')
 
             win = bpy.context.window
-            LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, snap={snap}')
-            set_screen_context(snap, win)
+            LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, snap={screen_context_snap}')
+            set_screen_context(screen_context_snap, win)
 
             return None  # unregister the timer
 
         # Restore the screen context state saved before file change.
+        # NOTE: This will run async and not take effect before below code.
+        # Need to re-arch
         LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, bpy.context.window={bpy.context.window}')
-        bpy.app.timers.register(_restore_context, first_interval=0.0)
+        bpy.app.timers.register(_call_set_context, first_interval=0.0)
         LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: After file reload, context re-set.')
 
         # ------------------------------------------------------------------
         # Create report
-        changed = diff.get("changed", {})
-        added = diff.get("added",{})
+        diff_changed = diff.get("changed", {})
+        diff_added = diff.get("added",{})
         removed = diff.get("removed", {})
 
         # Report findings
-        self.report({'INFO'}, f"Found a total of {len(changed)} changed, {len(added)} added, and {len(removed)} removed items in the file.")
+        self.report({'INFO'}, f"Found a total of {len(diff_changed)} changed, {len(diff_added)} added, and {len(removed)} removed items in the file.")
 
         # ------------------------------------------------------------------
         # Highlight current scene's objects
         bpy.ops.object.select_all(action='DESELECT')
 
-        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Current scene is {context.scene}.')
-        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Current view_layer {context.view_layer}.')
+        # NOTE: Since re-setting the scene will run async, we will need to manually extract the relevant 
+        # scene and view layer from bpy.data
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Current context.scene is {context.scene}.')
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Current context.view_layer {context.view_layer}.')
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Current context.window.scene is {getattr(context.window,"scene",None)}.')
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Current context.window.view_layer {getattr(context.window,"view_layer",None)}.')
+
+        screen_context_objs = resolve_snapshot_objects(screen_context_snap)
+        target_scene      = screen_context_objs.get("scene")
+        target_view_layer = screen_context_objs.get("view_layer")
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: From screen context resolve, target_scene={target_scene}')
+        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: From screen context resolve, target_vl={target_view_layer}')
 
         # Only objects can be selected
-        changed_obj_names = changed.get("objects",{})
-        added_obj_names   = added.get("objects",{})
+        changed_obj_names = diff_changed.get("objects",{})
+        added_obj_names   = diff_added.get("objects",{})
 
         # Pare collections disabled in view layer
-        candidate_objects = [object for object in context.scene.objects if object not in objects_under_excluded(context.view_layer)]
-        for object in objects_under_excluded(context.view_layer):
-            LOG.debug(f"Excluded object: {object.name}")
-        for object in candidate_objects:
-            LOG.debug(f"Candidate object: {object.name}")
+        candidate_objects = [object for object in target_scene.objects if object not in objects_under_excluded_colls(target_view_layer)]
         target_objects = [object for object in candidate_objects if object.name in (list(changed_obj_names.keys()) + list(added_obj_names.keys()))]
-        for object in target_objects:
-            LOG.debug(f"Target object: {object.name}")
+
+        if LOG.getEffectiveLevel() >= logging.DEBUG:
+            for object in objects_under_excluded_colls(target_view_layer):
+                LOG.debug(f"Excluded object: {object.name}")
+            for object in candidate_objects:
+                LOG.debug(f"Candidate object: {object.name}")
+            for object in target_objects:
+                LOG.debug(f"Target object: {object.name}")
 
         disabled_objects = []
         for object in target_objects:
