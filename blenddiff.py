@@ -26,6 +26,11 @@ import logging
 LOG = logging.getLogger(__name__)
 logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
 
+USAGE = f"""This script must be run via Blender using:
+  blender --background --python {os.path.basename(__file__)} -- [args]
+NB: The extra \'--\' before [args] is mandatory. E.g. \"... -- --arg1\"
+"""
+
 try:
     import bpy, mathutils
 except ImportError:
@@ -276,8 +281,9 @@ def _cli():
     ap.add_argument("--file-modified", required=True)
     ap.add_argument("--id-prop")
     grp = ap.add_mutually_exclusive_group()
-    grp.add_argument("--out")
+    grp.add_argument("--file-out")
     grp.add_argument("--stdout", action="store_true")
+    ap.add_argument("--pretty-json", action="store_true", help="Output pretty-printed JSON.")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -285,13 +291,17 @@ def _cli():
         logging.getLogger().setLevel(logging.DEBUG)
 
     diff = diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
-    payload = json.dumps(diff, indent=2)
-    if args.stdout or not args.out:
-        print(payload)
-    if args.out:
-        with open(args.out, "w", encoding="utf-8") as fh:
+    if args.pretty_json:
+        payload = json.dumps(diff, indent=2)
+    else:
+        payload = json.dumps(diff, separators=(',', ':'))  # minified, one line
+    
+    if args.stdout or not args.file_out:
+        print(payload, flush=True)
+    if args.file_out:
+        with open(args.file_out, "w", encoding="utf-8") as fh:
             fh.write(payload)
-        LOG.info("Diff saved to %s", args.out)
+        LOG.info("Diff saved to %s", args.file_out)
 
 
 if __name__ == "__main__":
