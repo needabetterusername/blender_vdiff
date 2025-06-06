@@ -14,9 +14,9 @@
 #
 # CLI examples
 #   blender --background -m blenddiff -- \
-#       --fileA a.blend --fileB b.blend --out diff.json
+#       --file-original a.blend --file-modified b.blend --file-out diff.json
 #   blender --background -m blenddiff -- \
-#       --fileA a.blend --fileB b.blend --idprop guid --stdout
+#       --file-original a.blend --file-modified b.blend --id-prop guid --stdout
 # -----------------------------------------------------------------------------------
 
 from __future__ import annotations
