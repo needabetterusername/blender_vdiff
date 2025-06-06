@@ -22,20 +22,18 @@
 from __future__ import annotations
 
 import os, sys
-USAGE = f"""This script must be run via Blender using:
-  blender --background --python {os.path.basename(__file__)} -- [args]
-NB: The extra \'--\' before [args] is mandatory. E.g. \"... -- --arg1\"
-"""
+import logging
+LOG = logging.getLogger(__name__)
+logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
+
 try:
     import bpy, mathutils
 except ImportError:
     print("ImportError: " + USAGE)
     sys.exit(1)
 
-import argparse, hashlib, json, logging, numbers
+import argparse, hashlib, json, numbers
 from typing import Dict, Any
-
-LOG = logging.getLogger("blenddiff")
 
 _cache = None
 
@@ -283,8 +281,8 @@ def _cli():
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(levelname)s: %(message)s")
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     diff = diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
     payload = json.dumps(diff, indent=2)
