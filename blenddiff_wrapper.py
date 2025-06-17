@@ -8,20 +8,15 @@ logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
 LOG = logging.getLogger(__name__)
 
 
-def run_diff(file_original: str, file_modified: str, *, id_prop: str | None = None, blender_exec: str = "/Applications/Blender.app/Contents/MacOS/Blender"):
+def run_diff(blender_exec: str, args: list[str]):
     cmd = [
         blender_exec,
         "--background",
         "--python", "blenddiff.py",
-        "--",
-        "--file-original", file_original,
-        "--file-modified", file_modified,
-        "--stdout"
+        "--"
     ]
-    if id_prop:
-        cmd.extend(["--id-prop", id_prop])
-    
-    LOG.debug("Running command: %s", " ".join(cmd))
+    cmd += args
+    LOG.debug(f"Running command: {cmd}")
 
     # Run blender and capture output
     result = subprocess.run(
@@ -38,28 +33,23 @@ def run_diff(file_original: str, file_modified: str, *, id_prop: str | None = No
     return json.loads(json_output)
 
 if __name__ == "__main__":
+
+    _BLENDER_EXEC_LABEL = "--blender-exec"
+
     ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender.")
-    ap.add_argument("--file-original", required=True, help="Path to the original .blend file.")
-    ap.add_argument("--file-modified", required=True, help="Path to the modified .blend file.")
-    ap.add_argument("--id-prop", help="Optional ID property to use for datablock identity.")
-    ap.add_argument("--blender-exec", help="Path to the Blender executable.", required=True)
-    ap.add_argument("--pretty-json", action="store_true", help="Output JSON in pretty format.")
-    ap.add_argument("--debug", action="store_true", help="Enable debug logging to stdout.")
-    args = ap.parse_args()
+    # ap.add_argument("--file-original", required=True, help="Path to the original .blend file.")
+    # ap.add_argument("--file-modified", required=True, help="Path to the modified .blend file.")
+    # ap.add_argument("--id-prop", help="Optional ID property to use for datablock identity.")
+    ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
+    # ap.add_argument("--pretty-json", action="store_true", help="Output JSON in pretty format.")
+    # ap.add_argument("--debug", action="store_true", help="Enable debug logging to stdout.")
 
-    # Set logging level
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+    args, argv = ap.parse_known_args() 
 
-    diff = run_diff(
-        file_original=args.file_original,
-        file_modified=args.file_modified,
-        id_prop=args.id_prop,
-        blender_exec=args.blender_exec
+    result = run_diff(
+        blender_exec = args.blender_exec,
+        args = argv
     )
 
     # Output the result
-    if args.pretty_json:
-        print(json.dumps(diff, indent=2), flush=True)  # Pretty-print JSON output
-    else:
-        print(json.dumps(diff, separators=(',', ':')), flush=True)  # Compact JSON output
+    print(result)
