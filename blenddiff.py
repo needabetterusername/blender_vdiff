@@ -29,7 +29,7 @@
 
 from __future__ import annotations
 
-import os, sys, logging, argparse, hashlib, json, numbers
+import os, sys, logging, argparse, subprocess, hashlib, json, numbers
 from typing import Dict, Any
 
 LOG = logging.getLogger(__name__)
@@ -40,15 +40,15 @@ USAGE = f"""This script must be run via Blender using:
 NB: The extra '--' before [args] is mandatory. E.g. '... -- --arg1'
 """
 
+# See if we are in Blender runtime
 try:
     import bpy, mathutils
     _BLENDER = True
 except ImportError:
     _BLENDER = False
     # We still want to allow use via import, so we don't exit here.
-    if __name__ == "__main__":
-        print("ImportError: " + USAGE)
-        sys.exit(1)
+    # Error will only occur if the specific method is called.
+
 
 # -----------------------------------------------------------------------------
 # 1. Configuration
@@ -284,9 +284,7 @@ def get_diff_cache():
     return _cache
 
 # -----------------------------------------------------------------------------
-# 7. CLI entry‑point -----------------------------------------------------------
-
-
+# 0. Arg parser class ---------------------------------------------------------
 class BlendDiffParser(argparse.ArgumentParser):
 
     """Reusable argument parser for blenddiff CLI and wrappers."""
@@ -332,9 +330,8 @@ class BlendDiffParser(argparse.ArgumentParser):
         return args
 
 
-def _run_within_blender():
-    if "--" not in sys.argv:
-        return
+def _run_directly_from_args():
+    """Run blenddiff from the command line arguments received through Blender."""
     argv = sys.argv[sys.argv.index("--") + 1:]
     args = BlendDiffParser().parse_args(argv)
 
@@ -364,6 +361,70 @@ def _run_within_blender():
             fh.write(payload_str)
         LOG.info("Output saved to %s", args.file_out)
 
+# Run wrapper
+def run_from_wrapper(blender_exec: str, args: list[str]):
+    cmd = [
+        blender_exec,
+        "--background",
+        "--python", "blenddiff.py",
+        "--"
+    ]
+    cmd += args
+    LOG.debug(f"Running command: {cmd}")
 
-if __name__ == "__main__":
-    _run_within_blender()
+    # Run blender and capture output
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+    )
+    
+    # Find the JSON output - it starts with '{'
+    output_lines = result.stdout.splitlines()
+    LOG.debug("Blender output: %s", output_lines)
+    json_output = next(line for line in output_lines if line.startswith('{'))
+    
+    return json.loads(json_output)
+
+
+# -----------------------------------------------------------------------------
+# 1. Arg parsing ---------------------------------------------------------
+if __name__ == "__main__": # bl_ext.{...} when running under blender
+    if _BLENDER and "--" in sys.argv:
+        # Run from Blender
+        _run_directly_from_args()
+        
+    if not _BLENDER and "--" not in sys.argv:
+
+        _BLENDER_EXEC_LABEL = "--blender-exec"
+
+        ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender.")
+        ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
+        ap.add_argument(
+            "--wrapper-log-level",
+            help="The log level for the wrapper.",
+            required=False,
+            choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
+        )
+
+        args, argv = ap.parse_known_args() 
+
+        if args.wrapper_log_level:
+            LOG.setLevel(args.wrapper_log_level)
+        LOG.debug(f"Wrapper got args: {args}")
+        LOG.debug(f"Wrapper got argv: {argv}")
+
+        bd_ap = BlendDiffParser()
+        try:
+            bd_ap.parse_args(argv)
+        except Exception as e:
+            LOG.error(f"Error parsing blenddiff arguments: {e}")
+            sys.exit(1)
+
+        result = run_from_wrapper(
+            blender_exec = args.blender_exec,
+            args = argv
+        )
+
+        # Output the result
+        print(result)
