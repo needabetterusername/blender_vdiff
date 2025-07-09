@@ -332,7 +332,7 @@ class BlendDiffParser(argparse.ArgumentParser):
         return args
 
 
-def _cli():
+def _run_within_blender():
     if "--" not in sys.argv:
         return
     argv = sys.argv[sys.argv.index("--") + 1:]
@@ -366,4 +366,4 @@ def _cli():
 
 
 if __name__ == "__main__":
-    _cli()
+    _run_within_blender()
