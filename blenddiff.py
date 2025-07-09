@@ -42,9 +42,13 @@ NB: The extra '--' before [args] is mandatory. E.g. '... -- --arg1'
 
 try:
     import bpy, mathutils
+    _BLENDER = True
 except ImportError:
-    print("ImportError: " + USAGE)
-    sys.exit(1)
+    _BLENDER = False
+    # We still want to allow use via import, so we don't exit here.
+    if __name__ == "__main__":
+        print("ImportError: " + USAGE)
+        sys.exit(1)
 
 # -----------------------------------------------------------------------------
 # 1. Configuration
@@ -283,43 +287,71 @@ def get_diff_cache():
 # 7. CLI entry‑point -----------------------------------------------------------
 
 
+class BlendDiffParser(argparse.ArgumentParser):
+
+    """Reusable argument parser for blenddiff CLI and wrappers."""
+    def __init__(self):
+        super().__init__()
+
+        # Operation selection
+        op_grp = self.add_argument_group("op-mode", "Operation mode")
+        ex_grp = op_grp.add_mutually_exclusive_group(required=True)
+        ex_grp.add_argument("--hash", action="store_true", help="Generate an authored‑hash for a single .blend file")
+        ex_grp.add_argument("--diff", action="store_true", help="Diff two .blend files")
+
+        hash_grp = self.add_argument_group("hash-mode", "Hash mode")
+        hash_grp.add_argument("--hash-file", help="Generate an authored‑hash for a single .blend file")
+
+        diff_grp = self.add_argument_group("diff-mode", "Diff mode")
+        diff_grp.add_argument("--file-original", help="Original .blend file for diff")
+        diff_grp.add_argument("--file-modified", help="Modified .blend file for diff")
+
+        # Shared options
+        self.add_argument("--id-prop", help="Custom property used for stable identity", required=False)
+
+        out_grp = self.add_mutually_exclusive_group(required=True)
+        out_grp.add_argument("--file-out", help="Save output JSON to file", required=False)
+        out_grp.add_argument("--stdout", action="store_true", help="Print output to stdout", required=False)
+
+        self.add_argument("--pretty-json", action="store_true", help="Pretty‑print JSON (indent=2)")
+        self.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+
+    def parse_args(self, args=None, namespace=None):
+        args = super().parse_args(args, namespace)
+        # Custom required logic
+        if args.hash:
+            if not args.hash_file:
+                self.error("Must provide --hash-file when using --hash")
+        elif args.diff:
+            if not (args.file_original and args.file_modified):
+                self.error("Must provide both --file-original and --file-modified when using --diff")
+        else:
+            self.error("Must specify either --hash or --diff")
+        if not (args.file_out or args.stdout):
+            self.error("One of --file-out or --stdout is required")
+        return args
+
+
 def _cli():
     if "--" not in sys.argv:
         return
     argv = sys.argv[sys.argv.index("--") + 1:]
-    ap = argparse.ArgumentParser(description="BlendDiff & authored‑hash utility")
-
-    # Operation selection ----------------------------------------------------
-    ap.add_argument("--hash-file", help="Generate an authored‑hash for a single .blend file")
-    ap.add_argument("--file-original", help="Original .blend file for diff")
-    ap.add_argument("--file-modified", help="Modified .blend file for diff")
-
-    # Shared options ---------------------------------------------------------
-    ap.add_argument("--id-prop", help="Custom property used for stable identity")
-
-    out_grp = ap.add_mutually_exclusive_group()
-    out_grp.add_argument("--file-out", help="Save output JSON to file")
-    out_grp.add_argument("--stdout", action="store_true", help="Print output to stdout")
-
-    ap.add_argument("--pretty-json", action="store_true", help="Pretty‑print JSON (indent=2)")
-    ap.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
-
-    args = ap.parse_args(argv)
+    args = BlendDiffParser().parse_args(argv)
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # HASH mode --------------------------------------------------------------
+    # HASH mode
     if args.hash_file:
         digest = hash_blend_file(args.hash_file, id_prop=args.id_prop)
         payload = {"hash": digest}
-    # DIFF mode --------------------------------------------------------------
+    # DIFF mode
     else:
         if not (args.file_original and args.file_modified):
-            ap.error("--file-original and --file-modified are required when not using --hash-file")
+            BlendDiffParser().parser.error("--file-original and --file-modified are required when not using --hash-file")
         payload = diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
 
-    # Serialise & output -----------------------------------------------------
+    # Serialise & output
     if args.pretty_json:
         payload_str = json.dumps(payload, indent=2)
     else:
