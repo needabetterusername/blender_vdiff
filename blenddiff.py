@@ -38,7 +38,8 @@
 
 from __future__ import annotations
 
-import os, sys, logging, argparse, subprocess, hashlib, json, numbers
+import os, sys, logging, argparse, subprocess
+import hashlib, json, numbers, inspect
 from typing import Dict, Any
 
 LOG = logging.getLogger(__name__)
@@ -59,238 +60,283 @@ except ImportError:
     # Error will only occur if the specific method is called.
 
 
-# -----------------------------------------------------------------------------
-# 1. Configuration
-SKIP_IDB_COLLS = {
-    "batch_remove", "bl_rna", "filepath", "is_dirty", "is_saved", "orphans_purge",
-    "rna_type", "temp_data", "user_map", "window_managers", "workspaces",
-}
+class BlendDiff():
 
-SKIP_RNA_PATHS = {
-    # heavy payloads
-    "vertices", "edges", "loops", "polygons",
-    "pixels", "tiles",
-    # runtime‑only / noisy
-    "matrix_world", "rna_type",
-}
-
-PRIMITIVE_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}
-
-_cache: Dict[str, Any] | None = None  # populated by diff_current_vs_other()
-
-# -----------------------------------------------------------------------------
-# 1. RNA serialisation helpers -------------------------------------------------
+    def __init__(self):
+        self._cache: Dict[str, Any] | None = None  # populated by diff_current_vs_other()
+        self._custom_policy: Dict[str, Any] | None = None
 
 
-def _serialise(val):
-    """Serialise common Blender types into JSON‑compatible primitives."""
-    if isinstance(val, (bool, int, float, str)):
-        return val
-    if isinstance(val, (mathutils.Vector, mathutils.Color,
-                        mathutils.Euler, mathutils.Quaternion)):
-        return [float(x) for x in val]
-    if isinstance(val, mathutils.Matrix):
-        return [[float(c) for c in row] for row in val]
-    if isinstance(val, (list, tuple)) and all(isinstance(x, numbers.Number) for x in val):
-        return list(val)
-    return str(val)
+    # -----------------------------------------------------------------------------
+    # 1. Configuration Policy -----------------------------------------------------
+    # NOTE(!): Keep these alphabetically-ordered sets for consistent hashing
 
+    PRIMITIVE_TYPES = {"BOOLEAN", "ENUM", "FLOAT", "INT", "STRING", }
+    SKIP_IDB_COLLS = {
+        "batch_remove",
+        "bl_rna", 
+        "filepath", 
+        "is_dirty", 
+        "is_saved", 
+        "orphans_purge",
+        "rna_type", 
+        "temp_data", 
+        "user_map", 
+        "window_managers", 
+        "workspaces",
+    }
+    SKIP_RNA_PATHS = { 
+        # heavy payloads
+        "edges",
+        "loops", 
+        "matrix_world", # runtime‑only / noisy
+        "pixels", 
+        "polygons",
+        "rna_type", # runtime‑only / noisy 
+        "tiles", 
+        "vertices",  
+    }
 
-def _walk_rna(rna_obj, base="") -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for prop in rna_obj.bl_rna.properties:
-        if prop.is_readonly or prop.identifier == "rna_type":
-            continue
-        path = f"{base}.{prop.identifier}" if base else prop.identifier
-        if any(path.endswith(s) for s in SKIP_RNA_PATHS):
-            continue
-        try:
-            raw = getattr(rna_obj, prop.identifier)
-        except Exception as ex:
-            out[path] = f"<error:{ex}>"
-            continue
+    def _get_policy_metadata_json(self) -> Dict[str, Any]:
+        """Return a dict with the policy metadata, including a hash of the policy lists."""
+        policy = {
+            "primitive_types": sorted(self.PRIMITIVE_TYPES),
+            "skip_idb_collections": sorted(self.SKIP_IDB_COLLS),
+            "skip_rna_paths": sorted(self.SKIP_RNA_PATHS),
+        }
 
-        if prop.type in PRIMITIVE_TYPES:
-            out[path] = _serialise(raw)
-        elif prop.type == 'POINTER':
-            if raw is None:
-                out[path] = None
-            elif isinstance(raw, bpy.types.ID):
-                out[path] = f"{raw.__class__.__name__}:{raw.name_full}"
-            else:
-                out.update(_walk_rna(raw, path))
-        elif prop.is_collection:
+        # Create a deterministic hash of the policy lists
+        policy_str = json.dumps(policy, sort_keys=True, separators=(',', ':'))
+        policy["policy_hash"] = hashlib.blake2s(policy_str.encode()).hexdigest()
+
+        if self._custom_policy is not None:
+            return policy
+        else:
+            return {"policy_hash": policy["policy_hash"]}
+        
+    def _get_codebase_hash(self) -> Dict[str, Any]:
+        src = inspect.getsource(self.__class__)
+        hash = hashlib.blake2s(src.encode('utf-8')).hexdigest()
+        return {
+            #"class_name": self.__class__.__name__,
+            "codebase_hash": hash,
+        }
+
+    # -----------------------------------------------------------------------------
+    # 2. RNA serialisation helpers ------------------------------------------------
+    @classmethod
+    def _serialise(cls, val):
+        """Serialise common Blender types into JSON‑compatible primitives."""
+        if isinstance(val, (bool, int, float, str)):
+            return val
+        if isinstance(val, (mathutils.Vector, mathutils.Color,
+                            mathutils.Euler, mathutils.Quaternion)):
+            return [float(x) for x in val]
+        if isinstance(val, mathutils.Matrix):
+            return [[float(c) for c in row] for row in val]
+        if isinstance(val, (list, tuple)) and all(isinstance(x, numbers.Number) for x in val):
+            return list(val)
+        return str(val)
+
+    @classmethod
+    def _walk_rna(cls, rna_obj, base="") -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for prop in rna_obj.bl_rna.properties:
+            if prop.is_readonly or prop.identifier == "rna_type":
+                continue
+            path = f"{base}.{prop.identifier}" if base else prop.identifier
+            if any(path.endswith(s) for s in cls.SKIP_RNA_PATHS):
+                continue
             try:
-                for idx, item in enumerate(raw):
-                    subkey = getattr(item, "name", str(idx))
-                    subpath = f"{path}[{subkey}]"
-                    if isinstance(item, bpy.types.ID):
-                        out[subpath] = f"{item.__class__.__name__}:{item.name_full}"
-                    else:
-                        out.update(_walk_rna(item, subpath))
+                raw = getattr(rna_obj, prop.identifier)
             except Exception as ex:
                 out[path] = f"<error:{ex}>"
-        else:
-            out[path] = _serialise(raw)
-    return out
-
-# -----------------------------------------------------------------------------
-# 2. Identity, snapshot & per‑block hash helpers ------------------------------
-
-
-def _hash_datablock(idb: bpy.types.ID) -> Dict[str, Any]:
-    props = _walk_rna(idb)
-    props.setdefault("name", idb.name_full)
-    h = hashlib.blake2s()
-    for k in sorted(props):
-        h.update(k.encode())
-        h.update(str(props[k]).encode())
-    return {"type": idb.__class__.__name__, "props": props, "hash": h.hexdigest()}
-
-
-def _identity_key(idb: bpy.types.ID, block: Dict[str, Any], id_prop: str | None) -> str:
-    if id_prop and id_prop in idb.keys():
-        return f"{idb.__class__.__name__}:prop:{idb[id_prop]}"
-    if isinstance(idb, bpy.types.Object):
-        data_name = idb.data.name_full if idb.data else "NONE"
-        return f"Object:stable:{data_name}:{idb.type}"
-    return f"{idb.__class__.__name__}:hash:{block['hash']}"
-
-
-def _snapshot_current(id_prop: str | None = None, *, ignore_linked=True):
-    """Return a dict mapping *identity_key* ➜ block‑info for the *current* file."""
-    snapshot: Dict[str, Any] = {}
-    filtered_names = [n for n in dir(bpy.data)
-                      if not n.startswith("__") and n not in SKIP_IDB_COLLS]
-    for coll_name in filtered_names:
-        collection = getattr(bpy.data, coll_name)
-        if not hasattr(collection, "__iter__"):
-            continue
-        for idb in collection:
-            if not hasattr(idb, "name_full"):
                 continue
-            if ignore_linked and getattr(idb, "library", None):
+
+            if prop.type in cls.PRIMITIVE_TYPES:
+                out[path] = cls._serialise(raw)
+            elif prop.type == 'POINTER':
+                if raw is None:
+                    out[path] = None
+                elif isinstance(raw, bpy.types.ID):
+                    out[path] = f"{raw.__class__.__name__}:{raw.name_full}"
+                else:
+                    out.update(cls._walk_rna(raw, path))
+            elif prop.is_collection:
+                try:
+                    for idx, item in enumerate(raw):
+                        subkey = getattr(item, "name", str(idx))
+                        subpath = f"{path}[{subkey}]"
+                        if isinstance(item, bpy.types.ID):
+                            out[subpath] = f"{item.__class__.__name__}:{item.name_full}"
+                        else:
+                            out.update(cls._walk_rna(item, subpath))
+                except Exception as ex:
+                    out[path] = f"<error:{ex}>"
+            else:
+                out[path] = cls._serialise(raw)
+        return out
+
+    # -----------------------------------------------------------------------------
+    # 3. Identity, snapshot & per‑block hash helpers ------------------------------
+
+    @classmethod
+    def _hash_datablock(cls, idb: bpy.types.ID) -> Dict[str, Any]:
+        props = cls._walk_rna(idb)
+        props.setdefault("name", idb.name_full)
+        h = hashlib.blake2s()
+        for k in sorted(props):
+            h.update(k.encode())
+            h.update(str(props[k]).encode())
+        return {"type": idb.__class__.__name__, "props": props, "hash": h.hexdigest()}
+
+    @classmethod
+    def _identity_key(cls, idb: bpy.types.ID, block: Dict[str, Any], id_prop: str | None) -> str:
+        if id_prop and id_prop in idb.keys():
+            return f"{idb.__class__.__name__}:prop:{idb[id_prop]}"
+        if isinstance(idb, bpy.types.Object):
+            data_name = idb.data.name_full if idb.data else "NONE"
+            return f"Object:stable:{data_name}:{idb.type}"
+        return f"{idb.__class__.__name__}:hash:{block['hash']}"
+
+    @classmethod
+    def _snapshot_current(cls, id_prop: str | None = None, *, ignore_linked=True):
+        """Return a dict mapping *identity_key* ➜ block‑info for the *current* file."""
+        snapshot: Dict[str, Any] = {}
+        filtered_names = [n for n in dir(bpy.data)
+                        if not n.startswith("__") and n not in cls.SKIP_IDB_COLLS]
+        for coll_name in filtered_names:
+            collection = getattr(bpy.data, coll_name)
+            if not hasattr(collection, "__iter__"):
                 continue
-            block = _hash_datablock(idb)
-            block.setdefault("bpy_path", coll_name)  # useful for grouping
-            key = _identity_key(idb, block, id_prop)
-            if key in snapshot:
-                key = f"{key}:{idb.name_full}"  # fall‑back for accidental clashes
-            snapshot[key] = block
-    return snapshot
+            for idb in collection:
+                if not hasattr(idb, "name_full"):
+                    continue
+                if ignore_linked and getattr(idb, "library", None):
+                    continue
+                block = cls._hash_datablock(idb)
+                block.setdefault("bpy_path", coll_name)  # useful for grouping
+                key = cls._identity_key(idb, block, id_prop)
+                if key in snapshot:
+                    key = f"{key}:{idb.name_full}"  # fall‑back for accidental clashes
+                snapshot[key] = block
+        return snapshot
 
+    @classmethod
+    def _snapshot_file(cls, path: str, id_prop: str | None = None, *, ignore_linked=True):
+        """Load *path* (without UI) and snapshot it."""
+        bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
+        return cls._snapshot_current(id_prop, ignore_linked=ignore_linked)
 
-def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True):
-    """Load *path* (without UI) and snapshot it."""
-    bpy.ops.wm.open_mainfile(filepath=path, load_ui=False)
-    return _snapshot_current(id_prop, ignore_linked=ignore_linked)
+    # -----------------------------------------------------------------------------
+    # 4. FILE‑LEVEL AUTHORED HASH --------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# 3. FILE‑LEVEL AUTHORED HASH --------------------------------------------------
+    @classmethod
+    def _digest_from_snapshot(cls, snapshot: Dict[str, Any]) -> str:
+        """Collapse a snapshot into a single deterministic blake2s digest."""
+        h = hashlib.blake2s()
+        for key in sorted(snapshot):
+            h.update(key.encode())
+            h.update(snapshot[key]['hash'].encode())
+        return h.hexdigest()
 
+    @classmethod
+    def hash_blend_file(cls, path: str, *, id_prop: str | None = None) -> str:
+        """Return a blake2s digest representing *authored* content of *path*."""
+        snap = cls._snapshot_file(path, id_prop)
+        return cls._digest_from_snapshot(snap)
 
-def _digest_from_snapshot(snapshot: Dict[str, Any]) -> str:
-    """Collapse a snapshot into a single deterministic blake2s digest."""
-    h = hashlib.blake2s()
-    for key in sorted(snapshot):
-        h.update(key.encode())
-        h.update(snapshot[key]['hash'].encode())
-    return h.hexdigest()
+    @classmethod
+    def hash_current_file(cls,*, id_prop: str | None = None) -> str:
+        """Return an authored‑hash for the *currently open* file."""
+        snap = cls._snapshot_current(id_prop)
+        return cls._digest_from_snapshot(snap)
 
+    # -----------------------------------------------------------------------------
+    # 4. Diff helpers --------------------------------------------------------------
 
-def hash_blend_file(path: str, *, id_prop: str | None = None) -> str:
-    """Return a blake2s digest representing *authored* content of *path*."""
-    snap = _snapshot_file(path, id_prop)
-    return _digest_from_snapshot(snap)
+    @classmethod
+    def _safe_cmp(cls, a, b):
+        try:
+            return a != b
+        except Exception:
+            return str(a) != str(b)
 
+    @classmethod
+    def _diff_props(cls, pa, pb):
+        out: Dict[str, Any] = {}
+        for k in pa.keys() | pb.keys():
+            if cls._safe_cmp(pa.get(k), pb.get(k)):
+                out[k] = {"A": pa.get(k), "B": pb.get(k)}
+        return out
 
-def hash_current_file(*, id_prop: str | None = None) -> str:
-    """Return an authored‑hash for the *currently open* file."""
-    snap = _snapshot_current(id_prop)
-    return _digest_from_snapshot(snap)
+    @classmethod
+    def _group_by_type(cls, item_keys, src_dict, with_payload=False):
+        groups: Dict[str, Dict[str, Any]] = {}
+        for key in item_keys:
+            block = src_dict[key]
+            dtype = block.get("bpy_path", "Other")
+            name = block["props"]["name"]
+            groups.setdefault(dtype, {})[name] = block if with_payload else {}
+        return groups
 
-# -----------------------------------------------------------------------------
-# 4. Diff helpers --------------------------------------------------------------
+    @classmethod
+    def _diff_snapshots(cls, snap_a, snap_b):
+        added_keys = snap_b.keys() - snap_a.keys()
+        removed_keys = snap_a.keys() - snap_b.keys()
 
+        # changed ---------------------------------------------------------------
+        changed: Dict[str, Dict[str, Any]] = {}
+        for key in snap_a.keys() & snap_b.keys():
+            if snap_a[key]["hash"] == snap_b[key]["hash"]:
+                continue
+            delta = cls._diff_props(snap_a[key]["props"], snap_b[key]["props"])
+            if not delta:
+                continue
+            dtype = snap_b[key]["bpy_path"]
+            name = snap_b[key]["props"]["name"]
+            changed.setdefault(dtype, {})[name] = delta
 
-def _safe_cmp(a, b):
-    try:
-        return a != b
-    except Exception:
-        return str(a) != str(b)
+        added = cls._group_by_type(added_keys, snap_b)
+        removed = cls._group_by_type(removed_keys, snap_a)
 
+        return {"added": added, "removed": removed, "changed": changed}
 
-def _diff_props(pa, pb):
-    out: Dict[str, Any] = {}
-    for k in pa.keys() | pb.keys():
-        if _safe_cmp(pa.get(k), pb.get(k)):
-            out[k] = {"A": pa.get(k), "B": pb.get(k)}
-    return out
+    # -----------------------------------------------------------------------------
+    # 5. Public API ---------------------------------------------------------------
 
+    @classmethod
+    def diff_blend_files(cls, path_original: str, path_modified: str, *, id_prop: str | None = None):
+        """Return diff‑dict between *path_original* and *path_modified*."""
+        try:
+            snap_orig = cls._snapshot_file(path_original, id_prop)
+            snap_mod = cls._snapshot_file(path_modified, id_prop)
+            return cls._diff_snapshots(snap_orig, snap_mod)
+        except MemoryError:
+            return {"error": "MemoryError", "stage": "snapshot"}
 
-def _group_by_type(item_keys, src_dict, with_payload=False):
-    groups: Dict[str, Dict[str, Any]] = {}
-    for key in item_keys:
-        block = src_dict[key]
-        dtype = block.get("bpy_path", "Other")
-        name = block["props"]["name"]
-        groups.setdefault(dtype, {})[name] = block if with_payload else {}
-    return groups
+    def diff_current_vs_other(self, path_other: str, *, reverse: bool = False, id_prop: str | None = None):
+        """Interactive diff: current file vs *path_other* (or reverse)."""
 
+        try:
+            current_fp = bpy.data.filepath
+            snap_current = self.__class__._snapshot_current(id_prop)
+            snap_other   = self.__class__._snapshot_file(path_other, id_prop)
+            if current_fp:
+                bpy.ops.wm.open_mainfile(filepath=current_fp, load_ui=False)
+            self._cache = (self.__class__._diff_snapshots(snap_current, snap_other)
+                    if not reverse else self.__class__._diff_snapshots(snap_other, snap_current))
+            return self._cache
+        except MemoryError:
+            return {"error": "MemoryError", "stage": "snapshot"}
 
-def _diff_snapshots(snap_a, snap_b):
-    added_keys = snap_b.keys() - snap_a.keys()
-    removed_keys = snap_a.keys() - snap_b.keys()
+    def get_diff_cache(self):
+        """Return the cached diff result from the last diff operation."""
+        return self._cache
 
-    # changed ---------------------------------------------------------------
-    changed: Dict[str, Dict[str, Any]] = {}
-    for key in snap_a.keys() & snap_b.keys():
-        if snap_a[key]["hash"] == snap_b[key]["hash"]:
-            continue
-        delta = _diff_props(snap_a[key]["props"], snap_b[key]["props"])
-        if not delta:
-            continue
-        dtype = snap_b[key]["bpy_path"]
-        name = snap_b[key]["props"]["name"]
-        changed.setdefault(dtype, {})[name] = delta
-
-    added = _group_by_type(added_keys, snap_b)
-    removed = _group_by_type(removed_keys, snap_a)
-
-    return {"added": added, "removed": removed, "changed": changed}
-
-# -----------------------------------------------------------------------------
-# 5. Public API ---------------------------------------------------------------
-
-
-def diff_blend_files(path_original: str, path_modified: str, *, id_prop: str | None = None):
-    """Return diff‑dict between *path_original* and *path_modified*."""
-    try:
-        snap_orig = _snapshot_file(path_original, id_prop)
-        snap_mod = _snapshot_file(path_modified, id_prop)
-        return _diff_snapshots(snap_orig, snap_mod)
-    except MemoryError:
-        return {"error": "MemoryError", "stage": "snapshot"}
-
-
-def diff_current_vs_other(path_other: str, *, reverse: bool = False, id_prop: str | None = None):
-    """Interactive diff: current file vs *path_other* (or reverse)."""
-    global _cache
-    try:
-        current_fp = bpy.data.filepath
-        snap_current = _snapshot_current(id_prop)
-        snap_other = _snapshot_file(path_other, id_prop)
-        if current_fp:
-            bpy.ops.wm.open_mainfile(filepath=current_fp, load_ui=False)
-        _cache = (_diff_snapshots(snap_current, snap_other)
-                  if not reverse else _diff_snapshots(snap_other, snap_current))
-        return _cache
-    except MemoryError:
-        return {"error": "MemoryError", "stage": "snapshot"}
-
-
-def get_diff_cache():
-    return _cache
+    def set_invalid_cache(self):
+        """Invalidate the diff cache."""
+        self._cache = None
 
 # -----------------------------------------------------------------------------
 # Arg parser class ---------------------------------------------------------
@@ -347,15 +393,19 @@ def _run_directly_from_args():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    blend_diff = BlendDiff()
+
     # HASH mode
     if args.hash_file:
-        digest = hash_blend_file(args.hash_file, id_prop=args.id_prop)
-        payload = {"hash": digest}
+        digest = blend_diff.hash_blend_file(args.hash_file, id_prop=args.id_prop)
+        payload = {"file_hash": digest}
+        metadata = {**blend_diff._get_policy_metadata_json(), **blend_diff._get_codebase_hash()}
+        payload["metadata"] = metadata
     # DIFF mode
     else:
         if not (args.file_original and args.file_modified):
             BlendDiffArgParser().parser.error("--file-original and --file-modified are required when not using --hash-file")
-        payload = diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
+        payload = blend_diff.diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
 
     # Serialise & output
     if args.pretty_json:
