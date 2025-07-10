@@ -38,7 +38,8 @@
 
 from __future__ import annotations
 
-import os, sys, logging, argparse, subprocess, hashlib, json, numbers
+import os, sys, logging, argparse, subprocess
+import hashlib, json, numbers
 from typing import Dict, Any
 
 LOG = logging.getLogger(__name__)
@@ -70,7 +71,6 @@ class BlendDiff():
     # NOTE(!): Keep these alphabetically-ordered sets for consistent hashing
 
     PRIMITIVE_TYPES = {"BOOLEAN", "ENUM", "FLOAT", "INT", "STRING", }
-
     SKIP_IDB_COLLS = {
         "batch_remove",
         "bl_rna", 
@@ -96,7 +96,19 @@ class BlendDiff():
         "vertices",  
     }
 
+    def _get_policy_metadata_json(self) -> Dict[str, Any]:
+        """Return a dict with the policy metadata, including a hash of the policy lists."""
+        policy = {
+            "primitive_types": sorted(self.PRIMITIVE_TYPES),
+            "skip_idb_collections": sorted(self.SKIP_IDB_COLLS),
+            "skip_rna_paths": sorted(self.SKIP_RNA_PATHS),
+        }
 
+        # Create a deterministic hash of the policy lists
+        policy_str = json.dumps(policy, sort_keys=True, separators=(',', ':'))
+        policy["policy_hash"] = hashlib.blake2s(policy_str.encode()).hexdigest()
+
+        return policy
 
     # -----------------------------------------------------------------------------
     # 2. RNA serialisation helpers ------------------------------------------------
@@ -373,6 +385,7 @@ def _run_directly_from_args():
     if args.hash_file:
         digest = BlendDiff.hash_blend_file(args.hash_file, id_prop=args.id_prop)
         payload = {"hash": digest}
+        payload["metadata"] = BlendDiff()._get_policy_metadata_json()
     # DIFF mode
     else:
         if not (args.file_original and args.file_modified):
