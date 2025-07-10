@@ -61,27 +61,45 @@ except ImportError:
 
 class BlendDiff():
 
-    # -----------------------------------------------------------------------------
-    # 1. Configuration
-    SKIP_IDB_COLLS = {
-        "batch_remove", "bl_rna", "filepath", "is_dirty", "is_saved", "orphans_purge",
-        "rna_type", "temp_data", "user_map", "window_managers", "workspaces",
-    }
-    SKIP_RNA_PATHS = {
-        # heavy payloads
-        "vertices", "edges", "loops", "polygons",
-        "pixels", "tiles",
-        # runtime‑only / noisy
-        "matrix_world", "rna_type",
-    }
-    PRIMITIVE_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}
-
     def __init__(self):
         _cache: Dict[str, Any] | None = None  # populated by diff_current_vs_other()
 
-    # -----------------------------------------------------------------------------
-    # 2. RNA serialisation helpers -------------------------------------------------
 
+    # -----------------------------------------------------------------------------
+    # 1. Configuration Policy -----------------------------------------------------
+    # NOTE(!): Keep these alphabetically-ordered sets for consistent hashing
+
+    PRIMITIVE_TYPES = {"BOOLEAN", "ENUM", "FLOAT", "INT", "STRING", }
+
+    SKIP_IDB_COLLS = {
+        "batch_remove",
+        "bl_rna", 
+        "filepath", 
+        "is_dirty", 
+        "is_saved", 
+        "orphans_purge",
+        "rna_type", 
+        "temp_data", 
+        "user_map", 
+        "window_managers", 
+        "workspaces",
+    }
+    SKIP_RNA_PATHS = { 
+        # heavy payloads
+        "edges",
+        "loops", 
+        "matrix_world", # runtime‑only / noisy
+        "pixels", 
+        "polygons",
+        "rna_type", # runtime‑only / noisy 
+        "tiles", 
+        "vertices",  
+    }
+
+
+
+    # -----------------------------------------------------------------------------
+    # 2. RNA serialisation helpers ------------------------------------------------
     @classmethod
     def _serialise(cls, val):
         """Serialise common Blender types into JSON‑compatible primitives."""
@@ -289,7 +307,12 @@ class BlendDiff():
             return {"error": "MemoryError", "stage": "snapshot"}
 
     def get_diff_cache(self):
+        """Return the cached diff result from the last diff operation."""
         return self._cache
+
+    def set_invalid_cache(self):
+        """Invalidate the diff cache."""
+        self._cache = None
 
 # -----------------------------------------------------------------------------
 # Arg parser class ---------------------------------------------------------
