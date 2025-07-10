@@ -39,7 +39,7 @@
 from __future__ import annotations
 
 import os, sys, logging, argparse, subprocess
-import hashlib, json, numbers
+import hashlib, json, numbers, inspect
 from typing import Dict, Any
 
 LOG = logging.getLogger(__name__)
@@ -113,7 +113,14 @@ class BlendDiff():
             return policy
         else:
             return {"policy_hash": policy["policy_hash"]}
-
+        
+    def _get_codebase_hash(self) -> Dict[str, Any]:
+        src = inspect.getsource(self.__class__)
+        hash = hashlib.blake2s(src.encode('utf-8')).hexdigest()
+        return {
+            #"class_name": self.__class__.__name__,
+            "codebase_hash": hash,
+        }
 
     # -----------------------------------------------------------------------------
     # 2. RNA serialisation helpers ------------------------------------------------
@@ -391,8 +398,9 @@ def _run_directly_from_args():
     # HASH mode
     if args.hash_file:
         digest = blend_diff.hash_blend_file(args.hash_file, id_prop=args.id_prop)
-        payload = {"hash": digest}
-        payload["policy_metadata"] = blend_diff._get_policy_metadata_json()
+        payload = {"file_hash": digest}
+        metadata = {**blend_diff._get_policy_metadata_json(), **blend_diff._get_codebase_hash()}
+        payload["metadata"] = metadata
     # DIFF mode
     else:
         if not (args.file_original and args.file_modified):
