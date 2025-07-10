@@ -63,7 +63,8 @@ except ImportError:
 class BlendDiff():
 
     def __init__(self):
-        _cache: Dict[str, Any] | None = None  # populated by diff_current_vs_other()
+        self._cache: Dict[str, Any] | None = None  # populated by diff_current_vs_other()
+        self._custom_policy: Dict[str, Any] | None = None
 
 
     # -----------------------------------------------------------------------------
@@ -108,7 +109,11 @@ class BlendDiff():
         policy_str = json.dumps(policy, sort_keys=True, separators=(',', ':'))
         policy["policy_hash"] = hashlib.blake2s(policy_str.encode()).hexdigest()
 
-        return policy
+        if self._custom_policy is not None:
+            return policy
+        else:
+            return {"policy_hash": policy["policy_hash"]}
+
 
     # -----------------------------------------------------------------------------
     # 2. RNA serialisation helpers ------------------------------------------------
@@ -381,16 +386,18 @@ def _run_directly_from_args():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    blend_diff = BlendDiff()
+
     # HASH mode
     if args.hash_file:
-        digest = BlendDiff.hash_blend_file(args.hash_file, id_prop=args.id_prop)
+        digest = blend_diff.hash_blend_file(args.hash_file, id_prop=args.id_prop)
         payload = {"hash": digest}
-        payload["metadata"] = BlendDiff()._get_policy_metadata_json()
+        payload["policy_metadata"] = blend_diff._get_policy_metadata_json()
     # DIFF mode
     else:
         if not (args.file_original and args.file_modified):
             BlendDiffArgParser().parser.error("--file-original and --file-modified are required when not using --hash-file")
-        payload = BlendDiff.diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
+        payload = blend_diff.diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
 
     # Serialise & output
     if args.pretty_json:
