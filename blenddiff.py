@@ -14,17 +14,26 @@
 #   3) Otherwise, fall back to a content hash of the datablock’s serialised RNA:
 #        "<Type>:hash:<digest>".  Names are treated as properties and diffed separately.
 #
-# CLI examples
-#   # Diff two files and pretty‑print JSON to stdout
-#   blender --background --python blenddiff.py -- \
-#       --file-original a.blend --file-modified b.blend --pretty-json --stdout
+# -----------------------------------------------------------------------------------
+# CLI usage – **two launch modes**
 #
-#   # Diff two files using a custom GUID property and save to diff.json
-#   blender --background --python blenddiff.py -- \
-#       --file-original a.blend --file-modified b.blend --id-prop guid --file-out diff.json
+# A) *Directly from Blender* (no Python wrapper):
 #
-#   # Generate a single authored‑hash for quick equality checks
-#   blender --background --python blenddiff.py -- --hash-file a.blend --stdout
+#     blender --background --python blenddiff.py -- \
+#         --file-original a.blend --file-modified b.blend --pretty-json --stdout
+#
+#     blender --background --python blenddiff.py -- \
+#         --hash --hash-file a.blend --stdout
+#
+# B) *Wrapper convenience* (run this script with normal CPython and let it spawn Blender):
+#
+#     python blenddiff.py --blender-exec /path/to/Blender -- \
+#         --file-original a.blend --file-modified b.blend --stdout
+#
+#     python blenddiff.py --blender-exec /path/to/Blender -- \
+#         --hash --hash-file a.blend --stdout
+#
+#   The "--" separator is **mandatory** before the blenddiff‑specific arguments in *either* mode.
 # -----------------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -70,7 +79,7 @@ PRIMITIVE_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"}
 _cache: Dict[str, Any] | None = None  # populated by diff_current_vs_other()
 
 # -----------------------------------------------------------------------------
-# 2. RNA serialisation helpers -------------------------------------------------
+# 1. RNA serialisation helpers -------------------------------------------------
 
 
 def _serialise(val):
@@ -126,7 +135,7 @@ def _walk_rna(rna_obj, base="") -> Dict[str, Any]:
     return out
 
 # -----------------------------------------------------------------------------
-# 3. Identity, snapshot & per‑block hash helpers ------------------------------
+# 2. Identity, snapshot & per‑block hash helpers ------------------------------
 
 
 def _hash_datablock(idb: bpy.types.ID) -> Dict[str, Any]:
@@ -177,7 +186,7 @@ def _snapshot_file(path: str, id_prop: str | None = None, *, ignore_linked=True)
     return _snapshot_current(id_prop, ignore_linked=ignore_linked)
 
 # -----------------------------------------------------------------------------
-# 4. FILE‑LEVEL AUTHORED HASH --------------------------------------------------
+# 3. FILE‑LEVEL AUTHORED HASH --------------------------------------------------
 
 
 def _digest_from_snapshot(snapshot: Dict[str, Any]) -> str:
@@ -201,7 +210,7 @@ def hash_current_file(*, id_prop: str | None = None) -> str:
     return _digest_from_snapshot(snap)
 
 # -----------------------------------------------------------------------------
-# 5. Diff helpers --------------------------------------------------------------
+# 4. Diff helpers --------------------------------------------------------------
 
 
 def _safe_cmp(a, b):
@@ -251,7 +260,7 @@ def _diff_snapshots(snap_a, snap_b):
     return {"added": added, "removed": removed, "changed": changed}
 
 # -----------------------------------------------------------------------------
-# 6. Public API ---------------------------------------------------------------
+# 5. Public API ---------------------------------------------------------------
 
 
 def diff_blend_files(path_original: str, path_modified: str, *, id_prop: str | None = None):
@@ -284,8 +293,8 @@ def get_diff_cache():
     return _cache
 
 # -----------------------------------------------------------------------------
-# 0. Arg parser class ---------------------------------------------------------
-class BlendDiffParser(argparse.ArgumentParser):
+# Arg parser class ---------------------------------------------------------
+class BlendDiffArgParser(argparse.ArgumentParser):
 
     """Reusable argument parser for blenddiff CLI and wrappers."""
     def __init__(self):
@@ -333,7 +342,7 @@ class BlendDiffParser(argparse.ArgumentParser):
 def _run_directly_from_args():
     """Run blenddiff from the command line arguments received through Blender."""
     argv = sys.argv[sys.argv.index("--") + 1:]
-    args = BlendDiffParser().parse_args(argv)
+    args = BlendDiffArgParser().parse_args(argv)
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -345,7 +354,7 @@ def _run_directly_from_args():
     # DIFF mode
     else:
         if not (args.file_original and args.file_modified):
-            BlendDiffParser().parser.error("--file-original and --file-modified are required when not using --hash-file")
+            BlendDiffArgParser().parser.error("--file-original and --file-modified are required when not using --hash-file")
         payload = diff_blend_files(args.file_original, args.file_modified, id_prop=args.id_prop)
 
     # Serialise & output
@@ -398,23 +407,22 @@ if __name__ == "__main__": # bl_ext.{...} when running under blender
 
         _BLENDER_EXEC_LABEL = "--blender-exec"
 
-        ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender.")
-        ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
-        ap.add_argument(
+        wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
+        wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
+        wrap_ap.add_argument(
             "--wrapper-log-level",
             help="The log level for the wrapper.",
             required=False,
             choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
         )
-
-        args, argv = ap.parse_known_args() 
+        args, argv = wrap_ap.parse_known_args() 
 
         if args.wrapper_log_level:
             LOG.setLevel(args.wrapper_log_level)
         LOG.debug(f"Wrapper got args: {args}")
         LOG.debug(f"Wrapper got argv: {argv}")
 
-        bd_ap = BlendDiffParser()
+        bd_ap = BlendDiffArgParser()
         try:
             bd_ap.parse_args(argv)
         except Exception as e:
