@@ -422,10 +422,13 @@ def _run_directly_from_args():
 
 # Run wrapper
 def run_from_wrapper(blender_exec: str, args: list[str]):
+
+    script_path = os.path.abspath(__file__)
+
     cmd = [
         blender_exec,
         "--background",
-        "--python", "blenddiff.py",
+        "--python", script_path,
         "--"
     ]
     cmd += args
