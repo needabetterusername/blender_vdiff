@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 # Example of manifest file for a Blender extension
 # Change the values according to your extension
 schema_version = "1.0.0"
-id             = "blender_vdiff"
+id             = "vdiff_addon"
 version        = "0.0.1"
 name           = "vDiff"
 tagline        = "Visual Diff for Blender"
