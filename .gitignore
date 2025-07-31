@@ -1,6 +1,11 @@
 **/.DS_Store
 **/*.pyc
 **/*.blend1
+**/.pytest_cache
+**/.vscode
+**/.idea
+
+.cache/
 .venv
-tests/blender-projects
+**/blender-projects
 diff.json
