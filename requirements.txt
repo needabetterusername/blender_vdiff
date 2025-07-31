@@ -1,2 +1,5 @@
 pytest
 fake-bpy-module
+pyyaml
+pytest-blender
+blender-downloader

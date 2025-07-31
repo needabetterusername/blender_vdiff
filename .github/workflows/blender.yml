@@ -1,0 +1,37 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install pytest fake-bpy-module pyyaml
+      - env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: pytest -q -k "not it_blender"  # unit only
+
+  blender:
+    strategy:
+      fail-fast: false
+      matrix:
+        blender_ver: [ "3.6.15", "4.2.0" ]  # minimal required; extend as needed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install pytest pyyaml pytest-blender blender-downloader
+      - name: Fetch Blender
+        run: |
+          python scripts/fetch_blenders.py --cache .blcache --force || true
+          echo "BLENDER_EXE=$(ls .blcache/${{ matrix.blender_ver }}/**/blender 2>/dev/null | head -n1)" >> $GITHUB_ENV
+      - name: Run integration tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          BLENDER_INTEGRATION_EXE: ${{ env.BLENDER_EXE }}
+        run: |
+          pytest -q tests/it_blender -s --blender-executable "$BLENDER_INTEGRATION_EXE"
