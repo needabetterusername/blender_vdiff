@@ -6,6 +6,7 @@ versions:
   
 # Optional paths to Blender executables for each version
 # Versions must match EXACTLY.
+# NOTE: These might break act if they are outside your project.
 paths:
-  "3.6.22": "/Applications/Blender 3.6.22 LTS.app/Contents/MacOS/Blender"
+  #"3.6.22": "/Applications/Blender 3.6.22 LTS.app/Contents/MacOS/Blender"
   #"4.2.10": "/Applications/Blender 4.2.10.app/Contents/MacOS/Blender"
