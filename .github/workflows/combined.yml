@@ -16,7 +16,7 @@ jobs:
       - run: pip install pytest pyyaml pytest-blender blender-downloader
       - name: Fetch Blender
         run: |
-          python "$GITHUB_WORKSPACE/scripts/fetch_blenders.py" --force
+          python "$GITHUB_WORKSPACE/scripts/fetch_blenders.py"
           echo "BLENDER_EXE=$(ls .blcache/${{ matrix.blender_ver }}/**/blender 2>/dev/null | head -n1)" >> $GITHUB_ENV
       - name: Run integration tests
         env:
