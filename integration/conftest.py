@@ -1,25 +1,25 @@
+# integration/conftest.py
 """
 Auto-discover Blender executables cached in .cache/blender/<ver>.path
 (written by scripts/fetch_blenders.py).  Provides the fixture
 `blender_executable`, parametrised over every version found.
 """
-import os, tempfile, sys, pathlib, yaml
-import pytest
+import os, tempfile, sys, pathlib, yaml, pytest
 
 # --- guarantee clean prefs & scripts -----------------
-os.environ["BLENDER_USER_CONFIG"]   = tempfile.mkdtemp()
-os.environ["BLENDER_USER_SCRIPTS"]  = tempfile.mkdtemp()
+os.environ["BLENDER_USER_CONFIG"]  = tempfile.mkdtemp()
+os.environ["BLENDER_USER_SCRIPTS"] = tempfile.mkdtemp()
 
 # --- make src/ importable ----------------------------
-ROOT   = pathlib.Path(__file__).resolve().parents[1]
-SRC    = ROOT / "src"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SRC  = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-# --- prep Blender executables ----------------------
-CACHE  = ROOT / ".cache" / "blender"
-CFG    = yaml.safe_load((ROOT / ".blender-versions.yaml").read_text())
-VERS    = CFG.get("versions", [])
+# --- prep Blender executables ------------------------
+CACHE = ROOT / ".cache" / "blender"
+CFG   = yaml.safe_load((ROOT / ".blender-versions.yaml").read_text())
+VERS  = CFG.get("versions", [])
 
 
 def _executables():
@@ -30,12 +30,17 @@ def _executables():
 
 EXECES = dict(_executables())
 
+
 def pytest_generate_tests(metafunc):
-    if "blender_executable" in metafunc.fixturenames:
-        if EXECES:
-            ids, paths = zip(*EXECES.items())
-            metafunc.parametrize("blender_executable", paths, ids=ids)
-        else:
-            metafunc.parametrize(
-                "blender_executable", [],
-                marks=pytest.mark.skip("No Blender executables cached"))
+    """Parametrise the fixture `blender_executable`."""
+    if "blender_executable" not in metafunc.fixturenames:
+        return
+
+    if EXECES:                                           # ✔ executables found
+        ids, paths = zip(*EXECES.items())
+        metafunc.parametrize("blender_executable", paths, ids=ids)
+    else:                                                # ✘ none found → hard fail
+        pytest.fail(
+            "No Blender executables cached ‒ run scripts/fetch_blenders.py first",
+            pytrace=False,          # keeps the output clean
+        )
