@@ -7,5 +7,6 @@
 
 .cache/
 .venv
+.local-tools/
 **/blender-projects
 diff.json
