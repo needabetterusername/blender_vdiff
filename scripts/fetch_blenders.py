@@ -62,16 +62,22 @@ def _download_blender(ver: str, target: pathlib.Path, force: bool) -> pathlib.Pa
         # Request blender_downloader to download the specified version
         # and rely on its cache.
         print(f"↓ Downloading Blender {ver} …")
-        cp = subprocess.run(
-            [sys.executable, "-m", "blender_downloader",
-            "-e", "-d", str(target), "-b", "-q", ver],   # version LAST
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        exe_path = pathlib.Path(cp.stdout.strip())
+        try:
+            cp = subprocess.run(
+                [sys.executable, "-m", "blender_downloader",
+                "-e", "-d", str(target), "-b", "-q", ver],   # version LAST
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            exe_path = pathlib.Path(cp.stdout.strip())
+        except subprocess.CalledProcessError as e:
+            # Forward whatever blender_downloader wrote
+            print("blender_downloader failed:")
+            print("stdout:\n", e.stdout or "")
+            print("stderr:\n", e.stderr or "")
+            raise 
 
-    
     else:
         exe_path = target
 
