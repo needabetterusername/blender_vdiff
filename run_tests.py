@@ -43,7 +43,7 @@ def main() -> None:
         _prep_blender(args.blender)
         cmd += ["--blender-executable", args.blender]
     else:
-        cmd += ["-p", "no:pytest-blender"]         # skip plugin if no Blender
+        cmd += ["-p", "no:pytest-blender"]         # disable plugin
 
     cmd += extra_pytest
     print("▶ Running:", " ".join(cmd))
