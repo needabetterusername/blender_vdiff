@@ -9,4 +9,4 @@
 .venv
 .local-tools/
 **/blender-projects
-diff.json
+/diff.json
