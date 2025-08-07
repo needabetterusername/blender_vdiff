@@ -504,3 +504,8 @@ if __name__ == "__main__": # bl_ext.{...} when running under blender
 
             # Output the result
             print(result)
+        else:
+            # Invalid usage
+            LOG.error(USAGE)
+            LOG.warning("\'bpy\' and \'mathutil\' modules were importable. If you ran directly from python, this might be caused by a third-party package such as \'fake-bpy-module\'. Please remove them from the path (or use a venv) and try again.")
+            sys.exit(1)
