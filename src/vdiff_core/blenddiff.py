@@ -421,36 +421,92 @@ def _run_directly_from_args():
             fh.write(payload_str)
         LOG.info("JSON output saved.")
 
+def _extract_first_json(text: str):
+    start = text.find('{')
+    if start == -1:
+        raise ValueError("No JSON object found in subprocess output")
+
+    decoder = json.JSONDecoder()
+    obj, end = decoder.raw_decode(text[start:])   # parse first JSON object
+    return obj
+
 # Re-run via wrapper
-def run_from_wrapper(blender_exec: str, args: list[str]):
+def _run_from_wrapper():
 
-    script_path = os.path.abspath(__file__)
+    _BLENDER_EXEC_LABEL = "--blender-exec" # FLAG name for the Blender executable
 
-    cmd = [
-        blender_exec,
-        "--background",
-        "--python", script_path,
-        "--"
-    ]
-    cmd += args
-
-    # Run blender and capture output
-    LOG.debug(f"Running command: {cmd}")
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
+    wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
+    wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
+    wrap_ap.add_argument(
+        "--wrapper-log-level",
+        help="The log level for the wrapper.",
+        required=False,
+        choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
     )
+    args, argv = wrap_ap.parse_known_args() 
 
-    if "--file-out" not in args:
+    if args.wrapper_log_level:
+        LOG.setLevel(args.wrapper_log_level)
+
+    LOG.debug(f"Wrapper got args: {args}")
+    LOG.debug(f"Wrapper got argv: {argv}")
+
+    bd_ap = BlendDiffArgParser()
+    blender_args = None
+    try:
+        blender_args = bd_ap.parse_args(argv)
+        LOG.debug("Parsed blenddiff arguments successfully.")
+    except Exception as e:
+        LOG.error(f"Error parsing blenddiff arguments:\n{e}")
+        sys.exit(1)
+
+    try:
+        script_path = os.path.abspath(__file__)
+        cmd = [
+            args.blender_exec,
+            "--background",
+            "--python", script_path,
+            "--"
+        ]
+        cmd += argv
+
+        # Run blender and capture output
+        LOG.debug(f"Running command: {cmd}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True
+        )
+        LOG.debug(f"Blender command completed with return code {result.returncode}.")
+        LOG.debug(f"Blender stdout: {result.stdout}")
+        LOG.debug(f"Blender stderr: {result.stderr}")        
+
+    except Exception as e:
+        LOG.error(f"Error running wrapper:\n{e}")
+        sys.exit(1)
+
+    if not blender_args.file_out: # if we are not writing to a file, we expect JSON output on stdout
         # Find the JSON output - it starts with '{'
         output_lines = result.stdout.splitlines()
         LOG.debug("Blender output: %s", output_lines)
-        json_output = next(line for line in output_lines if line.startswith('{'))
-        
-        return json.loads(json_output)
+        #json_output = json.loads(next(line for line in output_lines if line.startswith('{')))
+        json_output = _extract_first_json(result.stdout)
+        LOG.debug("Captured JSON output: %s", json_output)
+
+        if blender_args.pretty_json:
+            json_output = json.dumps(json_output, indent=2)
+        else:
+            json_output = json.dumps(json_output, separators=(',', ':'))
+
+        print(json_output, flush=True)  # Print the JSON output to stdout
+
     else:
-        return None  # No stdout output, just file written
+        # If we are writing to a file, we expect the output to be in the file
+        if not os.path.exists(blender_args.file_out):
+            LOG.error(f"Output file could not be written.")
+            sys.exit(1)
+        else:
+            print(f"Output written to {blender_args.file_out}", flush=True)
 
 
 # -----------------------------------------------------------------------------
@@ -463,49 +519,12 @@ if __name__ == "__main__": # bl_ext.{...} when running under blender
         _run_directly_from_args()
     else:
         if (not _BLENDER and "--" not in sys.argv) :
-            # Run from wrapper script
-            _BLENDER_EXEC_LABEL = "--blender-exec"
-
-            wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
-            wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
-            wrap_ap.add_argument(
-                "--wrapper-log-level",
-                help="The log level for the wrapper.",
-                required=False,
-                choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
-            )
-            args, argv = wrap_ap.parse_known_args() 
-
-            if args.wrapper_log_level:
-                LOG.setLevel(args.wrapper_log_level)
-
+            # Run via wrapper
             LOG.debug("Running from wrapper.")
-            LOG.debug(f"Wrapper got args: {args}")
-            LOG.debug(f"Wrapper got argv: {argv}")
-
-            bd_ap = BlendDiffArgParser()
-            try:
-                bd_ap.parse_args(argv)
-                LOG.debug("Parsed blenddiff arguments successfully.")
-            except Exception as e:
-                LOG.error(f"Error parsing blenddiff arguments:\n{e}")
-                sys.exit(1)
-
-            LOG.debug(f"Running wrapper...")
-            try:
-                result = run_from_wrapper(
-                    blender_exec = args.blender_exec,
-                    args = argv
-                )
-                LOG.debug(f"Wrapper returned.")
-            except Exception as e:
-                LOG.error(f"Error running wrapper:\n{e}")
-                sys.exit(1)
-
-            # Output the result
-            print(result)
+            _run_from_wrapper()
         else:
             # Invalid usage
             LOG.error(USAGE)
-            LOG.warning("\'bpy\' and \'mathutil\' modules were importable. If you ran directly from python, this might be caused by a third-party package such as \'fake-bpy-module\'. Please remove them from the path (or use a venv) and try again.")
+            if (_BLENDER):
+                LOG.warning("\'bpy\' and \'mathutil\' modules were importable. If you ran directly from python, this might be caused by a third-party package such as \'fake-bpy-module\'. Please remove them from the path (or use a venv) and try again.")
             sys.exit(1)
