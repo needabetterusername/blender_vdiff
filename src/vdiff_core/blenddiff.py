@@ -386,7 +386,7 @@ class BlendDiffArgParser(argparse.ArgumentParser):
 
 
 def _run_directly_from_args():
-    """Run blenddiff from the command line arguments received through Blender."""
+    """Run blenddiff from the command line arguments as received through Blender."""
     argv = sys.argv[sys.argv.index("--") + 1:]
     args = BlendDiffArgParser().parse_args(argv)
 
@@ -413,14 +413,15 @@ def _run_directly_from_args():
     else:
         payload_str = json.dumps(payload, separators=(',', ':'))
 
-    if args.stdout or not args.file_out:
+    if args.stdout:
         print(payload_str, flush=True)
     if args.file_out:
+        LOG.info("Saving JSON output to %s", args.file_out)
         with open(args.file_out, "w", encoding="utf-8") as fh:
             fh.write(payload_str)
-        LOG.info("Output saved to %s", args.file_out)
+        LOG.info("JSON output saved.")
 
-# Run wrapper
+# Re-run via wrapper
 def run_from_wrapper(blender_exec: str, args: list[str]):
 
     script_path = os.path.abspath(__file__)
@@ -432,60 +433,74 @@ def run_from_wrapper(blender_exec: str, args: list[str]):
         "--"
     ]
     cmd += args
-    LOG.debug(f"Running command: {cmd}")
 
     # Run blender and capture output
+    LOG.debug(f"Running command: {cmd}")
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True
     )
-    
-    # Find the JSON output - it starts with '{'
-    output_lines = result.stdout.splitlines()
-    LOG.debug("Blender output: %s", output_lines)
-    json_output = next(line for line in output_lines if line.startswith('{'))
-    
-    return json.loads(json_output)
+
+    if "--file-out" not in args:
+        # Find the JSON output - it starts with '{'
+        output_lines = result.stdout.splitlines()
+        LOG.debug("Blender output: %s", output_lines)
+        json_output = next(line for line in output_lines if line.startswith('{'))
+        
+        return json.loads(json_output)
+    else:
+        return None  # No stdout output, just file written
 
 
 # -----------------------------------------------------------------------------
 # 1. Arg parsing ---------------------------------------------------------
 if __name__ == "__main__": # bl_ext.{...} when running under blender
+    
     if _BLENDER and "--" in sys.argv:
-        # Run from Blender
+        # Run in Blender
+        LOG.debug("Running in Blender directly.")
         _run_directly_from_args()
-        
-    if not _BLENDER and "--" not in sys.argv:
+    else:
+        if (not _BLENDER and "--" not in sys.argv) :
+            # Run from wrapper script
+            _BLENDER_EXEC_LABEL = "--blender-exec"
 
-        _BLENDER_EXEC_LABEL = "--blender-exec"
+            wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
+            wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
+            wrap_ap.add_argument(
+                "--wrapper-log-level",
+                help="The log level for the wrapper.",
+                required=False,
+                choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
+            )
+            args, argv = wrap_ap.parse_known_args() 
 
-        wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
-        wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
-        wrap_ap.add_argument(
-            "--wrapper-log-level",
-            help="The log level for the wrapper.",
-            required=False,
-            choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
-        )
-        args, argv = wrap_ap.parse_known_args() 
+            if args.wrapper_log_level:
+                LOG.setLevel(args.wrapper_log_level)
 
-        if args.wrapper_log_level:
-            LOG.setLevel(args.wrapper_log_level)
-        LOG.debug(f"Wrapper got args: {args}")
-        LOG.debug(f"Wrapper got argv: {argv}")
+            LOG.debug("Running from wrapper.")
+            LOG.debug(f"Wrapper got args: {args}")
+            LOG.debug(f"Wrapper got argv: {argv}")
 
-        bd_ap = BlendDiffArgParser()
-        try:
-            bd_ap.parse_args(argv)
-        except Exception as e:
-            LOG.error(f"Error parsing blenddiff arguments: {e}")
-            sys.exit(1)
+            bd_ap = BlendDiffArgParser()
+            try:
+                bd_ap.parse_args(argv)
+                LOG.debug("Parsed blenddiff arguments successfully.")
+            except Exception as e:
+                LOG.error(f"Error parsing blenddiff arguments:\n{e}")
+                sys.exit(1)
 
-        result = run_from_wrapper(
-            blender_exec = args.blender_exec,
-            args = argv
-        )
+            LOG.debug(f"Running wrapper...")
+            try:
+                result = run_from_wrapper(
+                    blender_exec = args.blender_exec,
+                    args = argv
+                )
+                LOG.debug(f"Wrapper returned.")
+            except Exception as e:
+                LOG.error(f"Error running wrapper:\n{e}")
+                sys.exit(1)
 
-        # Output the result
-        print(result)
+            # Output the result
+            print(result)
