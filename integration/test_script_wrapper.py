@@ -7,6 +7,8 @@ SCRIPT = pathlib.Path(__file__).parents[1] / "src" / "vdiff_core" / "blenddiff.p
 
 BASELINE_FILE_PATH_TC1 = str(DATA / "1" / "baseline.blend")
 MODIFIED_FILE_PATH_TC1 = str(DATA / "1" / "modified.blend")
+
+HASH_CHECK_FILE_PATH_TC1_MODIFIED = str(DATA / "1" / "hash-tc1-modified.json")
 DIFF_CHECK_FILE_PATH_TC1 = str(DATA / "1" / "diff.json")
 
 pytestmark = [pytest.mark.integration, pytest.mark.blender]   # ▶ tagged for the plugin
@@ -20,6 +22,43 @@ def run_blender_script(blender_executable, opts):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+###################################################################
+## HASH
+###################################################################
+@pytest.mark.integration
+def test_script_mode_hash_stdout(blender_executable):
+    opts = [
+        "--hash",
+        "--hash-file", MODIFIED_FILE_PATH_TC1,
+        "--stdout",
+    ]
+    cp = run_blender_script(blender_executable, opts)
+
+    assert cp.returncode == 0, cp.stderr
+    with pathlib.Path(HASH_CHECK_FILE_PATH_TC1_MODIFIED).open(encoding="utf-8") as f:
+        assert json.load(f) == json.loads(cp.stdout), f"Unexpected output: {cp.stdout.strip()}"    
+
+@pytest.mark.integration
+def test_script_mode_hash_file_out(blender_executable, tmp_path):
+
+    out_json_path = tmp_path / f"{uuid.uuid4().hex}.json"
+
+    opts = [
+        "--hash",
+        "--hash-file", MODIFIED_FILE_PATH_TC1,
+        "--file-out", out_json_path,
+    ]
+    cp = run_blender_script(blender_executable, opts)
+
+    assert cp.returncode == 0, cp.stderr
+    with pathlib.Path(HASH_CHECK_FILE_PATH_TC1_MODIFIED).open(encoding="utf-8") as truth_file:
+        with out_json_path.open(encoding="utf-8") as output_file:
+            assert json.load(truth_file) == json.load(output_file), f"Unexpected output: {output_file.read().strip()}"
+
+
+###################################################################
+## DIFF
+###################################################################
 @pytest.mark.integration
 def test_script_mode_diff_stdout(blender_executable):
     opts = [
@@ -36,7 +75,7 @@ def test_script_mode_diff_stdout(blender_executable):
 
 
 @pytest.mark.integration
-def test_script_mode_diff_json(blender_executable, tmp_path):
+def test_script_mode_diff_file_out(blender_executable, tmp_path):
 
     out_json_path = tmp_path / f"{uuid.uuid4().hex}.json"
 
