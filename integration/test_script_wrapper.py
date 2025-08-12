@@ -1,13 +1,13 @@
 # integration/test_module_mode.py
-import sys, pathlib, subprocess, json, pathlib
+import sys, pathlib, uuid, subprocess, json
 import pytest
 
 DATA   = pathlib.Path(__file__).parent / "test-cases"   # add .blend files later
+SCRIPT = pathlib.Path(__file__).parents[1] / "src" / "vdiff_core" / "blenddiff.py"
+
 BASELINE_FILE_PATH_TC1 = str(DATA / "1" / "baseline.blend")
 MODIFIED_FILE_PATH_TC1 = str(DATA / "1" / "modified.blend")
 DIFF_CHECK_FILE_PATH_TC1 = str(DATA / "1" / "diff.json")
-
-SCRIPT = pathlib.Path(__file__).parents[1] / "src" / "vdiff_core" / "blenddiff.py"
 
 pytestmark = [pytest.mark.integration, pytest.mark.blender]   # ▶ tagged for the plugin
 
@@ -18,6 +18,7 @@ def run_blender_script(blender_executable, opts):
         "--blender-exec", str(blender_executable),
     ] + opts
     return subprocess.run(cmd, capture_output=True, text=True)
+
 
 @pytest.mark.integration
 def test_script_mode_diff_stdout(blender_executable):
@@ -32,3 +33,22 @@ def test_script_mode_diff_stdout(blender_executable):
     assert cp.returncode == 0, cp.stderr
     with pathlib.Path(DIFF_CHECK_FILE_PATH_TC1).open(encoding="utf-8") as f:
         assert json.load(f) == json.loads(cp.stdout), f"Unexpected output: {cp.stdout.strip()}"
+
+
+@pytest.mark.integration
+def test_script_mode_diff_json(blender_executable, tmp_path):
+
+    out_json_path = tmp_path / f"{uuid.uuid4().hex}.json"
+
+    opts = [
+        "--diff",
+        "--file-original", BASELINE_FILE_PATH_TC1,
+        "--file-modified", MODIFIED_FILE_PATH_TC1,
+        "--file-out", out_json_path,
+    ]
+    cp = run_blender_script(blender_executable, opts)
+
+    assert cp.returncode == 0, cp.stderr
+    with pathlib.Path(DIFF_CHECK_FILE_PATH_TC1).open(encoding="utf-8") as truth_file:
+        with out_json_path.open(encoding="utf-8") as output_file:
+            assert json.load(truth_file) == json.load(output_file), f"Unexpected output: {output_file.read().strip()}"
