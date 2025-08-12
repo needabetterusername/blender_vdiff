@@ -361,6 +361,7 @@ class BlendDiffArgParser(argparse.ArgumentParser):
 
         # Shared options
         self.add_argument("--id-prop", help="Custom property used for stable identity", required=False)
+        self.add_argument("--no-factory-startup", action="store_true", help="Don't use factory startup option (not recommended)", required=False)
 
         out_grp = self.add_mutually_exclusive_group(required=True)
         out_grp.add_argument("--file-out", help="Save output JSON to file", required=False)
@@ -464,10 +465,16 @@ def _run_from_wrapper():
         script_path = os.path.abspath(__file__)
         cmd = [
             args.blender_exec,
-            "--background",
+            "--background"]
+        
+        if not blender_args.no_factory_startup:
+            cmd += ["--factory-startup"]
+
+        cmd += ["--factory-startup",  # start with factory settings
             "--python", script_path,
             "--"
         ]
+
         cmd += argv
 
         # Run blender and capture output
