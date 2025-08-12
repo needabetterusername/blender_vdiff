@@ -87,14 +87,12 @@ class BlendDiff():
     }
     SKIP_RNA_PATHS = { 
         # heavy payloads
-        "edges",
-        "loops", 
-        "matrix_world", # runtime‑only / noisy
-        "pixels", 
-        "polygons",
-        "rna_type", # runtime‑only / noisy 
-        "tiles", 
-        "vertices",  
+        "edges","loops","pixels","polygons","tiles","vertices",
+
+        # runtime / evaluated / noisy
+        "rna_type",
+        "matrix_world","matrix_local","matrix_basis","matrix_parent_inverse",
+        "dimensions","bound_box",
     }
 
     def _get_policy_metadata_json(self) -> Dict[str, Any]:
