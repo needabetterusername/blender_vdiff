@@ -141,7 +141,9 @@ class BlendDiff():
     @classmethod
     def _walk_rna(cls, rna_obj, base="") -> Dict[str, Any]:
         out: Dict[str, Any] = {}
-        for prop in rna_obj.bl_rna.properties:
+
+        # Sort properties by identifier for deterministic order
+        for prop in sorted(rna_obj.bl_rna.properties, key=lambda p: p.identifier):
             if prop.is_readonly or prop.identifier == "rna_type":
                 continue
             path = f"{base}.{prop.identifier}" if base else prop.identifier
@@ -155,6 +157,7 @@ class BlendDiff():
 
             if prop.type in cls.PRIMITIVE_TYPES:
                 out[path] = cls._serialise(raw)
+
             elif prop.type == 'POINTER':
                 if raw is None:
                     out[path] = None
@@ -162,10 +165,16 @@ class BlendDiff():
                     out[path] = f"{raw.__class__.__name__}:{raw.name_full}"
                 else:
                     out.update(cls._walk_rna(raw, path))
+
             elif prop.is_collection:
                 try:
-                    for idx, item in enumerate(raw):
-                        subkey = getattr(item, "name", str(idx))
+                    # Materialize and sort collection items by subkey (name if present, else zero-padded index)
+                    items = list(raw)
+                    def subkey_for(idx_item):
+                        idx, item = idx_item
+                        return getattr(item, "name", f"{idx:08d}")
+                    for idx, item in sorted(enumerate(items), key=subkey_for):
+                        subkey = getattr(item, "name", f"{idx:08d}")
                         subpath = f"{path}[{subkey}]"
                         if isinstance(item, bpy.types.ID):
                             out[subpath] = f"{item.__class__.__name__}:{item.name_full}"
@@ -173,8 +182,10 @@ class BlendDiff():
                             out.update(cls._walk_rna(item, subpath))
                 except Exception as ex:
                     out[path] = f"<error:{ex}>"
+
             else:
                 out[path] = cls._serialise(raw)
+
         return out
 
     # -----------------------------------------------------------------------------
@@ -201,25 +212,36 @@ class BlendDiff():
 
     @classmethod
     def _snapshot_current(cls, id_prop: str | None = None, *, ignore_linked=True):
-        """Return a dict mapping *identity_key* ➜ block‑info for the *current* file."""
+        """Return a dict mapping *identity_key* ➜ block-info for the *current* file."""
         snapshot: Dict[str, Any] = {}
-        filtered_names = [n for n in dir(bpy.data)
-                        if not n.startswith("__") and n not in cls.SKIP_IDB_COLLS]
+
+        # Sort the top-level bpy.data collections by name
+        filtered_names = sorted(
+            n for n in dir(bpy.data)
+            if not n.startswith("__") and n not in cls.SKIP_IDB_COLLS
+        )
+
         for coll_name in filtered_names:
             collection = getattr(bpy.data, coll_name)
             if not hasattr(collection, "__iter__"):
                 continue
-            for idb in collection:
+
+            # Sort members by stable name
+            def idb_key(x):
+                return getattr(x, "name_full", getattr(x, "name", repr(x)))
+            for idb in sorted(list(collection), key=idb_key):
                 if not hasattr(idb, "name_full"):
                     continue
                 if ignore_linked and getattr(idb, "library", None):
                     continue
+
                 block = cls._hash_datablock(idb)
-                block.setdefault("bpy_path", coll_name)  # useful for grouping
+                block.setdefault("bpy_path", coll_name)
                 key = cls._identity_key(idb, block, id_prop)
                 if key in snapshot:
-                    key = f"{key}:{idb.name_full}"  # fall‑back for accidental clashes
+                    key = f"{key}:{idb.name_full}"
                 snapshot[key] = block
+
         return snapshot
 
     @classmethod
@@ -265,29 +287,34 @@ class BlendDiff():
     @classmethod
     def _diff_props(cls, pa, pb):
         out: Dict[str, Any] = {}
-        for k in pa.keys() | pb.keys():
+        for k in sorted(pa.keys() | pb.keys()):  # sort union
             if cls._safe_cmp(pa.get(k), pb.get(k)):
                 out[k] = {"A": pa.get(k), "B": pb.get(k)}
         return out
 
     @classmethod
     def _group_by_type(cls, item_keys, src_dict, with_payload=False):
-        groups: Dict[str, Dict[str, Any]] = {}
+        # Build (dtype, name, payload) tuples, sort, then re-bucket
+        rows = []
         for key in item_keys:
             block = src_dict[key]
             dtype = block.get("bpy_path", "Other")
             name = block["props"]["name"]
-            groups.setdefault(dtype, {})[name] = block if with_payload else {}
+            rows.append((dtype, name, block if with_payload else {}))
+        rows.sort(key=lambda r: (r[0], r[1]))
+
+        groups: Dict[str, Dict[str, Any]] = {}
+        for dtype, name, payload in rows:
+            groups.setdefault(dtype, {})[name] = payload
         return groups
 
     @classmethod
     def _diff_snapshots(cls, snap_a, snap_b):
-        added_keys = snap_b.keys() - snap_a.keys()
-        removed_keys = snap_a.keys() - snap_b.keys()
+        added_keys   = sorted(snap_b.keys() - snap_a.keys())
+        removed_keys = sorted(snap_a.keys() - snap_b.keys())
 
-        # changed ---------------------------------------------------------------
         changed: Dict[str, Dict[str, Any]] = {}
-        for key in snap_a.keys() & snap_b.keys():
+        for key in sorted(snap_a.keys() & snap_b.keys()):
             if snap_a[key]["hash"] == snap_b[key]["hash"]:
                 continue
             delta = cls._diff_props(snap_a[key]["props"], snap_b[key]["props"])
@@ -295,7 +322,9 @@ class BlendDiff():
                 continue
             dtype = snap_b[key]["bpy_path"]
             name = snap_b[key]["props"]["name"]
-            changed.setdefault(dtype, {})[name] = delta
+            # Ensure deterministic insertion order per dtype then name
+            bucket = changed.setdefault(dtype, {})
+            bucket[name] = delta
 
         added = cls._group_by_type(added_keys, snap_b)
         removed = cls._group_by_type(removed_keys, snap_a)
@@ -410,9 +439,9 @@ def _run_directly_from_args():
 
     # Serialise & output
     if args.pretty_json:
-        payload_str = json.dumps(payload, indent=2)
+        payload_str = json.dumps(payload, indent=2, sort_keys=True)
     else:
-        payload_str = json.dumps(payload, separators=(',', ':'))
+        payload_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
 
     if args.stdout:
         print(payload_str, flush=True)
@@ -468,12 +497,10 @@ def _run_from_wrapper():
             "--background"]
         
         if not blender_args.no_factory_startup:
-            cmd += ["--factory-startup"]
+            cmd += ["--factory-startup"] # start with factory settings
 
-        cmd += ["--factory-startup",  # start with factory settings
-            "--python", script_path,
-            "--"
-        ]
+        cmd += ["--python", script_path,
+                "--"]  # the '--' is mandatory to separate Blender args from script args
 
         cmd += argv
 
