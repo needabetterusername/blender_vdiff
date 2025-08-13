@@ -26,7 +26,7 @@ def run_wrapper(blender_executable, opts):
 ## HASH
 ###################################################################
 @pytest.mark.integration
-def test_script_mode_hash_stdout(blender_executable):
+def test_wrapper_mode_hash_stdout(blender_executable):
     opts = [
         "--hash",
         "--hash-file", MODIFIED_FILE_PATH_TC1,
@@ -39,7 +39,7 @@ def test_script_mode_hash_stdout(blender_executable):
         assert json.load(f) == json.loads(cp.stdout), f"Unexpected output: {cp.stdout.strip()}"
 
 @pytest.mark.integration
-def test_script_mode_hash_file_out(blender_executable, tmp_path):
+def test_wrapper_mode_hash_file_out(blender_executable, tmp_path):
 
     out_json_path = tmp_path / f"{uuid.uuid4().hex}.json"
 
@@ -60,7 +60,7 @@ def test_script_mode_hash_file_out(blender_executable, tmp_path):
 ## DIFF
 ###################################################################
 @pytest.mark.integration
-def test_script_mode_diff_stdout(blender_executable):
+def test_wrapper_mode_diff_stdout(blender_executable):
     opts = [
         "--diff",
         "--file-original", BASELINE_FILE_PATH_TC1,
@@ -75,7 +75,7 @@ def test_script_mode_diff_stdout(blender_executable):
 
 
 @pytest.mark.integration
-def test_script_mode_diff_file_out(blender_executable, tmp_path):
+def test_wrapper_mode_diff_file_out(blender_executable, tmp_path):
 
     out_json_path = tmp_path / f"{uuid.uuid4().hex}.json"
 
