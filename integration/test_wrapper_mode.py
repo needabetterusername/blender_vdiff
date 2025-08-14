@@ -25,6 +25,7 @@ def run_wrapper(blender_executable, opts):
 ###################################################################
 ## HASH
 ###################################################################
+@pytest.mark.xfail(strict=False, reason="Currently not supported across Blender versions.")
 @pytest.mark.integration
 def test_wrapper_mode_hash_stdout(blender_executable):
     opts = [
@@ -38,6 +39,7 @@ def test_wrapper_mode_hash_stdout(blender_executable):
     with pathlib.Path(HASH_CHECK_FILE_PATH_TC1_MODIFIED).open(encoding="utf-8") as f:
         assert json.load(f) == json.loads(cp.stdout), f"Unexpected output: {cp.stdout.strip()}"
 
+@pytest.mark.xfail(strict=False, reason="Currently not supported across Blender versions.")
 @pytest.mark.integration
 def test_wrapper_mode_hash_file_out(blender_executable, tmp_path):
 

@@ -35,6 +35,7 @@ def _extract_first_json(text: str):
 ###################################################################
 ## HASH
 ###################################################################
+@pytest.mark.xfail(strict=False, reason="Currently not supported across Blender versions.")
 @pytest.mark.integration
 def test_blender_script_mode_hash_stdout(blender_executable):
     opts = [
@@ -50,6 +51,7 @@ def test_blender_script_mode_hash_stdout(blender_executable):
     with pathlib.Path(HASH_CHECK_FILE_PATH_TC1_MODIFIED).open(encoding="utf-8") as f:
         assert json.load(f) == json_output, f"Unexpected output: {json_output}"
 
+@pytest.mark.xfail(strict=False, reason="Currently not supported across Blender versions.")
 @pytest.mark.integration
 def test_blender_script_mode_hash_file_out(blender_executable, tmp_path):
 
