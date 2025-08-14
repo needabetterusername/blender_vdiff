@@ -1,0 +1,68 @@
+{
+  "added": {
+    "collections": {
+      "LCA": {}
+    },
+    "meshes": {
+      "Cube": {},
+      "Icosphere": {}
+    },
+    "objects": {
+      "Icosphere": {}
+    },
+    "scenes": {
+      "Scene": {},
+      "Scene.001": {}
+    },
+    "texts": {
+      "script.py": {}
+    }
+  },
+  "changed": {
+    "objects": {
+      "Cube": {
+        "active_material": {
+          "A": "Material:Material",
+          "B": null
+        },
+        "empty_display_type": {
+          "A": "ARROWS",
+          "B": "PLAIN_AXES"
+        },
+        "lock_rotations_4d": {
+          "A": false,
+          "B": true
+        }
+      },
+      "Cube.001": {
+        "hide_select": {
+          "A": false,
+          "B": true
+        },
+        "scale": {
+          "A": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "B": [
+            1.5,
+            1.5,
+            1.5
+          ]
+        }
+      }
+    }
+  },
+  "removed": {
+    "materials": {
+      "Material": {}
+    },
+    "meshes": {
+      "Cube": {}
+    },
+    "scenes": {
+      "Scene": {}
+    }
+  }
+}

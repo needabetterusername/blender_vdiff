@@ -2,13 +2,15 @@ schema_version = "1.0.0"
 
 # Example of manifest file for a Blender extension
 # Change the values according to your extension
-id = "blendervdiff"
-version = "1.0.0"
-name = "vDiff"
-tagline = "Visual Diff for Blender"
-maintainer = "Chris Margach"
+# schema_version = "1.0.0"
+id             = "vdiff_addon"
+version        = "0.0.1"
+name           = "vDiff"
+tagline        = "Visual Diff for Blender"
+maintainer     = "Chris Margach"
+blender_version_min = "4.2.0" 
 # Supported types: "add-on", "theme"
-type = "add-on"
+type           = "add-on"
 
 # Optional link to documentation, support, source files, etc
 # website = "https://extensions.blender.org/add-ons/my-example-package/"
@@ -17,7 +19,7 @@ type = "add-on"
 # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
 tags = ["Animation", "Sequencer"]
 
-blender_version_min = "4.2.0"
+# blender_version_min = "4.2.0"
 # # Optional: Blender version that the extension does not support, earlier versions are supported.
 # # This can be omitted and defined later on the extensions platform if an issue is found.
 # blender_version_max = "5.1.0"

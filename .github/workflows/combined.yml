@@ -1,0 +1,44 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  combined:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Blender runtime deps (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [ "${ACT:-}" = "true" ]; then SUDO=""; else SUDO="sudo"; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y --no-install-recommends \
+            xorg \
+            libgl1-mesa-glx libegl1-mesa
+          $SUDO apt-get clean
+          $SUDO rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Set up venv & deps
+        shell: bash
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install -U pip
+          pip install pytest pyyaml blender-downloader pytest-blender
+
+      - name: Fetch Blender(s)
+        shell: bash
+        run: |
+          . .venv/bin/activate
+          python scripts/fetch_blenders.py  # your script reads .blender-versions.yaml
+
+      - name: Run tests (script + wrapper modes)
+        env:
+          PYTHONNOUSERSITE: "1"
+        shell: bash
+        run: |
+          . .venv/bin/activate
+          python run_tests.py

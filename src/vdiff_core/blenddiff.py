@@ -87,14 +87,12 @@ class BlendDiff():
     }
     SKIP_RNA_PATHS = { 
         # heavy payloads
-        "edges",
-        "loops", 
-        "matrix_world", # runtime‑only / noisy
-        "pixels", 
-        "polygons",
-        "rna_type", # runtime‑only / noisy 
-        "tiles", 
-        "vertices",  
+        "edges","loops","pixels","polygons","tiles","vertices",
+
+        # runtime / evaluated / noisy
+        "rna_type",
+        "matrix_world","matrix_local","matrix_basis","matrix_parent_inverse",
+        "dimensions","bound_box",
     }
 
     def _get_policy_metadata_json(self) -> Dict[str, Any]:
@@ -141,7 +139,9 @@ class BlendDiff():
     @classmethod
     def _walk_rna(cls, rna_obj, base="") -> Dict[str, Any]:
         out: Dict[str, Any] = {}
-        for prop in rna_obj.bl_rna.properties:
+
+        # Sort properties by identifier for deterministic order
+        for prop in sorted(rna_obj.bl_rna.properties, key=lambda p: p.identifier):
             if prop.is_readonly or prop.identifier == "rna_type":
                 continue
             path = f"{base}.{prop.identifier}" if base else prop.identifier
@@ -155,6 +155,7 @@ class BlendDiff():
 
             if prop.type in cls.PRIMITIVE_TYPES:
                 out[path] = cls._serialise(raw)
+
             elif prop.type == 'POINTER':
                 if raw is None:
                     out[path] = None
@@ -162,10 +163,16 @@ class BlendDiff():
                     out[path] = f"{raw.__class__.__name__}:{raw.name_full}"
                 else:
                     out.update(cls._walk_rna(raw, path))
+
             elif prop.is_collection:
                 try:
-                    for idx, item in enumerate(raw):
-                        subkey = getattr(item, "name", str(idx))
+                    # Materialize and sort collection items by subkey (name if present, else zero-padded index)
+                    items = list(raw)
+                    def subkey_for(idx_item):
+                        idx, item = idx_item
+                        return getattr(item, "name", f"{idx:08d}")
+                    for idx, item in sorted(enumerate(items), key=subkey_for):
+                        subkey = getattr(item, "name", f"{idx:08d}")
                         subpath = f"{path}[{subkey}]"
                         if isinstance(item, bpy.types.ID):
                             out[subpath] = f"{item.__class__.__name__}:{item.name_full}"
@@ -173,8 +180,10 @@ class BlendDiff():
                             out.update(cls._walk_rna(item, subpath))
                 except Exception as ex:
                     out[path] = f"<error:{ex}>"
+
             else:
                 out[path] = cls._serialise(raw)
+
         return out
 
     # -----------------------------------------------------------------------------
@@ -201,25 +210,36 @@ class BlendDiff():
 
     @classmethod
     def _snapshot_current(cls, id_prop: str | None = None, *, ignore_linked=True):
-        """Return a dict mapping *identity_key* ➜ block‑info for the *current* file."""
+        """Return a dict mapping *identity_key* ➜ block-info for the *current* file."""
         snapshot: Dict[str, Any] = {}
-        filtered_names = [n for n in dir(bpy.data)
-                        if not n.startswith("__") and n not in cls.SKIP_IDB_COLLS]
+
+        # Sort the top-level bpy.data collections by name
+        filtered_names = sorted(
+            n for n in dir(bpy.data)
+            if not n.startswith("__") and n not in cls.SKIP_IDB_COLLS
+        )
+
         for coll_name in filtered_names:
             collection = getattr(bpy.data, coll_name)
             if not hasattr(collection, "__iter__"):
                 continue
-            for idb in collection:
+
+            # Sort members by stable name
+            def idb_key(x):
+                return getattr(x, "name_full", getattr(x, "name", repr(x)))
+            for idb in sorted(list(collection), key=idb_key):
                 if not hasattr(idb, "name_full"):
                     continue
                 if ignore_linked and getattr(idb, "library", None):
                     continue
+
                 block = cls._hash_datablock(idb)
-                block.setdefault("bpy_path", coll_name)  # useful for grouping
+                block.setdefault("bpy_path", coll_name)
                 key = cls._identity_key(idb, block, id_prop)
                 if key in snapshot:
-                    key = f"{key}:{idb.name_full}"  # fall‑back for accidental clashes
+                    key = f"{key}:{idb.name_full}"
                 snapshot[key] = block
+
         return snapshot
 
     @classmethod
@@ -265,29 +285,34 @@ class BlendDiff():
     @classmethod
     def _diff_props(cls, pa, pb):
         out: Dict[str, Any] = {}
-        for k in pa.keys() | pb.keys():
+        for k in sorted(pa.keys() | pb.keys()):  # sort union
             if cls._safe_cmp(pa.get(k), pb.get(k)):
                 out[k] = {"A": pa.get(k), "B": pb.get(k)}
         return out
 
     @classmethod
     def _group_by_type(cls, item_keys, src_dict, with_payload=False):
-        groups: Dict[str, Dict[str, Any]] = {}
+        # Build (dtype, name, payload) tuples, sort, then re-bucket
+        rows = []
         for key in item_keys:
             block = src_dict[key]
             dtype = block.get("bpy_path", "Other")
             name = block["props"]["name"]
-            groups.setdefault(dtype, {})[name] = block if with_payload else {}
+            rows.append((dtype, name, block if with_payload else {}))
+        rows.sort(key=lambda r: (r[0], r[1]))
+
+        groups: Dict[str, Dict[str, Any]] = {}
+        for dtype, name, payload in rows:
+            groups.setdefault(dtype, {})[name] = payload
         return groups
 
     @classmethod
     def _diff_snapshots(cls, snap_a, snap_b):
-        added_keys = snap_b.keys() - snap_a.keys()
-        removed_keys = snap_a.keys() - snap_b.keys()
+        added_keys   = sorted(snap_b.keys() - snap_a.keys())
+        removed_keys = sorted(snap_a.keys() - snap_b.keys())
 
-        # changed ---------------------------------------------------------------
         changed: Dict[str, Dict[str, Any]] = {}
-        for key in snap_a.keys() & snap_b.keys():
+        for key in sorted(snap_a.keys() & snap_b.keys()):
             if snap_a[key]["hash"] == snap_b[key]["hash"]:
                 continue
             delta = cls._diff_props(snap_a[key]["props"], snap_b[key]["props"])
@@ -295,7 +320,9 @@ class BlendDiff():
                 continue
             dtype = snap_b[key]["bpy_path"]
             name = snap_b[key]["props"]["name"]
-            changed.setdefault(dtype, {})[name] = delta
+            # Ensure deterministic insertion order per dtype then name
+            bucket = changed.setdefault(dtype, {})
+            bucket[name] = delta
 
         added = cls._group_by_type(added_keys, snap_b)
         removed = cls._group_by_type(removed_keys, snap_a)
@@ -361,6 +388,7 @@ class BlendDiffArgParser(argparse.ArgumentParser):
 
         # Shared options
         self.add_argument("--id-prop", help="Custom property used for stable identity", required=False)
+        self.add_argument("--no-factory-startup", action="store_true", help="Don't use factory startup option (not recommended)", required=False)
 
         out_grp = self.add_mutually_exclusive_group(required=True)
         out_grp.add_argument("--file-out", help="Save output JSON to file", required=False)
@@ -386,7 +414,7 @@ class BlendDiffArgParser(argparse.ArgumentParser):
 
 
 def _run_directly_from_args():
-    """Run blenddiff from the command line arguments received through Blender."""
+    """Run blenddiff from the command line arguments as received through Blender."""
     argv = sys.argv[sys.argv.index("--") + 1:]
     args = BlendDiffArgParser().parse_args(argv)
 
@@ -409,83 +437,126 @@ def _run_directly_from_args():
 
     # Serialise & output
     if args.pretty_json:
-        payload_str = json.dumps(payload, indent=2)
+        payload_str = json.dumps(payload, indent=2, sort_keys=True)
     else:
-        payload_str = json.dumps(payload, separators=(',', ':'))
+        payload_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
 
-    if args.stdout or not args.file_out:
+    if args.stdout:
         print(payload_str, flush=True)
     if args.file_out:
+        LOG.info("Saving JSON output to %s", args.file_out)
         with open(args.file_out, "w", encoding="utf-8") as fh:
             fh.write(payload_str)
-        LOG.info("Output saved to %s", args.file_out)
+        LOG.info("JSON output saved.")
 
-# Run wrapper
-def run_from_wrapper(blender_exec: str, args: list[str]):
+def _extract_first_json(text: str):
+    start = text.find('{')
+    if start == -1:
+        raise ValueError("No JSON object found in subprocess output")
 
-    script_path = os.path.abspath(__file__)
+    decoder = json.JSONDecoder()
+    obj, end = decoder.raw_decode(text[start:])   # parse first JSON object
+    return obj
 
-    cmd = [
-        blender_exec,
-        "--background",
-        "--python", script_path,
-        "--"
-    ]
-    cmd += args
-    LOG.debug(f"Running command: {cmd}")
+# Re-run via wrapper
+def _run_from_wrapper():
 
-    # Run blender and capture output
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
+    _BLENDER_EXEC_LABEL = "--blender-exec" # FLAG name for the Blender executable
+
+    wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
+    wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
+    wrap_ap.add_argument(
+        "--wrapper-log-level",
+        help="The log level for the wrapper.",
+        required=False,
+        choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
     )
-    
-    # Find the JSON output - it starts with '{'
-    output_lines = result.stdout.splitlines()
-    LOG.debug("Blender output: %s", output_lines)
-    json_output = next(line for line in output_lines if line.startswith('{'))
-    
-    return json.loads(json_output)
+    args, argv = wrap_ap.parse_known_args() 
+
+    if args.wrapper_log_level:
+        LOG.setLevel(args.wrapper_log_level)
+
+    LOG.debug(f"Wrapper got args: {args}")
+    LOG.debug(f"Wrapper got argv: {argv}")
+
+    bd_ap = BlendDiffArgParser()
+    blender_args = None
+    try:
+        blender_args = bd_ap.parse_args(argv)
+        LOG.debug("Parsed blenddiff arguments successfully.")
+    except Exception as e:
+        LOG.error(f"Error parsing blenddiff arguments:\n{e}")
+        sys.exit(1)
+
+    try:
+        script_path = os.path.abspath(__file__)
+        cmd = [
+            args.blender_exec,
+            "--background"]
+        
+        if not blender_args.no_factory_startup:
+            cmd += ["--factory-startup"] # start with factory settings
+
+        cmd += ["--python", script_path,
+                "--"]  # the '--' is mandatory to separate Blender args from script args
+
+        cmd += argv
+
+        # Run blender and capture output
+        LOG.debug(f"Running command: {cmd}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True
+        )
+        LOG.debug(f"Blender command completed with return code {result.returncode}.")
+        LOG.debug(f"Blender stdout: {result.stdout}")
+        LOG.debug(f"Blender stderr: {result.stderr}")        
+
+    except Exception as e:
+        LOG.error(f"Error running wrapper:\n{e}")
+        sys.exit(1)
+
+    if not blender_args.file_out: # if we are not writing to a file, we expect JSON output on stdout
+        # Find the JSON output - it starts with '{'
+        output_lines = result.stdout.splitlines()
+        LOG.debug("Blender output: %s", output_lines)
+        #json_output = json.loads(next(line for line in output_lines if line.startswith('{')))
+        json_output = _extract_first_json(result.stdout)
+        LOG.debug("Captured JSON output: %s", json_output)
+
+        if blender_args.pretty_json:
+            json_output = json.dumps(json_output, indent=2)
+        else:
+            json_output = json.dumps(json_output, separators=(',', ':'))
+
+        print(json_output, flush=True)  # Print the JSON output to stdout
+
+    else:
+        # If we are writing to a file, we expect the output to be in the file
+        if not os.path.exists(blender_args.file_out):
+            LOG.error(f"Output file could not be written.")
+            sys.exit(1)
+        else:
+            print(f"Output written to {blender_args.file_out}", flush=True)
 
 
 # -----------------------------------------------------------------------------
 # 1. Arg parsing ---------------------------------------------------------
 if __name__ == "__main__": # bl_ext.{...} when running under blender
+    
     if _BLENDER and "--" in sys.argv:
-        # Run from Blender
+        # Run in Blender
+        LOG.debug("Running in Blender directly.")
         _run_directly_from_args()
-        
-    if not _BLENDER and "--" not in sys.argv:
-
-        _BLENDER_EXEC_LABEL = "--blender-exec"
-
-        wrap_ap = argparse.ArgumentParser(description="Wrapper for running blenddiff via Blender CLI.")
-        wrap_ap.add_argument(_BLENDER_EXEC_LABEL, help="Path to the Blender executable.", required=True)
-        wrap_ap.add_argument(
-            "--wrapper-log-level",
-            help="The log level for the wrapper.",
-            required=False,
-            choices=[name for name in logging._nameToLevel.keys() if name in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}]
-        )
-        args, argv = wrap_ap.parse_known_args() 
-
-        if args.wrapper_log_level:
-            LOG.setLevel(args.wrapper_log_level)
-        LOG.debug(f"Wrapper got args: {args}")
-        LOG.debug(f"Wrapper got argv: {argv}")
-
-        bd_ap = BlendDiffArgParser()
-        try:
-            bd_ap.parse_args(argv)
-        except Exception as e:
-            LOG.error(f"Error parsing blenddiff arguments: {e}")
+    else:
+        if (not _BLENDER and "--" not in sys.argv) :
+            # Run via wrapper
+            LOG.debug("Running from wrapper.")
+            _run_from_wrapper()
+        else:
+            # Invalid usage
+            LOG.error(USAGE)
+            if (_BLENDER):
+                LOG.warning("\'bpy\' and \'mathutil\' modules were importable. If you ran directly from python, this might be caused by a third-party package such as \'fake-bpy-module\'. Please remove them from the path (or use a venv) and try again.")
             sys.exit(1)
-
-        result = run_from_wrapper(
-            blender_exec = args.blender_exec,
-            args = argv
-        )
-
-        # Output the result
-        print(result)
