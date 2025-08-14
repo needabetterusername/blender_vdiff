@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse, os, subprocess, sys, tempfile, shutil, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent
-SRC  = ROOT / "src"
+SRC  = ROOT / "blender_vdiff" / "src"
 
 def _temp_dir() -> str:
     return tempfile.mkdtemp(prefix="bvt_")
