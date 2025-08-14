@@ -1,40 +1,44 @@
 name: CI
-
-on: [pull_request]
+on: [push, pull_request]
 
 jobs:
   combined:
-    strategy:
-      fail-fast: false
-      matrix:
-        blender_ver: [ "3.6.22", "4.2.0" ]  # minimal required; extend as needed
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      # Install the runtime libraries Blender needs
-      - name: Install Blender runtime deps (X11 + Mesa)
-        if: ${{ env.ACT == 'true' }} # Only required for act
+      - name: Install Blender runtime deps (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
-          apt-get update -y
-          # minimal set; pulls in libXxf86vm, libXrender, etc. via dependencies
-          DEBIAN_FRONTEND=noninteractive \
-          apt-get install -y --no-install-recommends \
+          if [ "${ACT:-}" = "true" ]; then SUDO=""; else SUDO="sudo"; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y --no-install-recommends \
             xorg \
-            libgl1-mesa-glx \
-            libegl1-mesa
-          apt-get clean
-          rm -rf /var/lib/apt/lists/*
+            libgl1-mesa-glx libegl1-mesa
+          $SUDO apt-get clean
+          $SUDO rm -rf /var/lib/apt/lists/*
+
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - run: pip install pytest pyyaml pytest-blender blender-downloader
-      - name: Fetch Blender
+      - name: Set up venv & deps
+        shell: bash
         run: |
-          python "$GITHUB_WORKSPACE/scripts/fetch_blenders.py"
-          echo "BLENDER_EXE=$(ls .blcache/${{ matrix.blender_ver }}/**/blender 2>/dev/null | head -n1)" >> $GITHUB_ENV
-      - name: Run integration tests
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install -U pip
+          pip install pytest pyyaml blender-downloader pytest-blender
+
+      - name: Fetch Blender(s)
+        shell: bash
+        run: |
+          . .venv/bin/activate
+          python scripts/fetch_blenders.py  # your script reads .blender-versions.yaml
+
+      - name: Run tests (script + wrapper modes)
         env:
-          BLENDER_EXE: "" # will be overwritten
-          PYTHONPATH: ${{ github.workspace }}/src
-          BLENDER_INTEGRATION_EXE: ${{ env.BLENDER_EXE }}
+          PYTHONNOUSERSITE: "1"
+        shell: bash
         run: |
-          python "$GITHUB_WORKSPACE/run_tests.py"
+          . .venv/bin/activate
+          python run_tests.py
