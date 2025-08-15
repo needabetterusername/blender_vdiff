@@ -20,7 +20,7 @@ from bpy.types import AddonPreferences, Panel, Operator, PropertyGroup
 from bpy.app import translations
 from bpy.app.handlers import persistent
 
-from .blendiff import blenddiff
+from .src.vdiff_core.blenddiff import BlendDiff
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -361,7 +361,7 @@ class VDIFF_OT_Compare(Operator):
         #      but it woudl NOT survive a subsequent/intervening reload.
         #   -> As above, use of load post will guarantee a working environment
 
-        diff = blenddiff.diff_current_vs_other(target)
+        diff = BD.diff_current_vs_other(target)
 
         LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Got JSON diff:\n{json.dumps(diff, indent=2)}')
         if "error" in diff:
@@ -484,12 +484,19 @@ def register():
 
     bpy.app.handlers.load_post.append(update_compare_filepath)
 
+    global BD
+    BD = BlendDiff()
+
 
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     del bpy.types.WindowManager.compare_filepath
+
     bpy.app.handlers.load_post.remove(update_compare_filepath)
+
+    global BD
+    BD = None
 
 if __name__ == "__main__":
     register()
