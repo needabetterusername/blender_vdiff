@@ -7,11 +7,10 @@ from __future__ import annotations
 import argparse, os, subprocess, sys, tempfile, shutil, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent
-SRC  = ROOT / "blender_vdiff" / "src"
+
 
 def _temp_dir() -> str:
     return tempfile.mkdtemp(prefix="bvt_")
-
 
 
 def _prep_blender(blender_exe: str) -> None:
@@ -37,7 +36,7 @@ def main() -> None:
     os.environ["BLENDER_USER_CONFIG"]  = _temp_dir()
     os.environ["BLENDER_USER_SCRIPTS"] = _temp_dir()
 
-    cmd: list[str] = [sys.executable, "-m", "pytest", "-c", "pytest.ini"]
+    cmd: list[str] = [sys.executable, "-m", "pytest", "-c", str(ROOT / "pytest.ini")]
 
     if args.blender:
         _prep_blender(args.blender)
