@@ -20,7 +20,7 @@ from bpy.types import AddonPreferences, Panel, Operator, PropertyGroup
 from bpy.app import translations
 from bpy.app.handlers import persistent
 
-from .src.vdiff_core.blenddiff import BlendDiff
+from .src.blenddiff import BlendDiff
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,

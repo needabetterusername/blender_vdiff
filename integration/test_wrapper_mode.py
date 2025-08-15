@@ -3,7 +3,7 @@ import sys, pathlib, uuid, subprocess, json
 import pytest
 
 DATA   = pathlib.Path(__file__).parent / "test-cases"   # add .blend files later
-SCRIPT = pathlib.Path(__file__).parents[1] / "blender_vdiff"/ "src" / "blenddiff.py"
+SCRIPT = pathlib.Path(__file__).parents[1] / "addons" / "blender_vdiff"/ "src" / "blenddiff.py"
 
 BASELINE_FILE_PATH_TC1 = str(DATA / "1" / "baseline.blend")
 MODIFIED_FILE_PATH_TC1 = str(DATA / "1" / "modified.blend")

@@ -12,7 +12,7 @@ os.environ["BLENDER_USER_SCRIPTS"] = tempfile.mkdtemp()
 
 # --- make src/ importable ----------------------------
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SRC  = ROOT / "blender_vdiff" / "src"
+SRC  = ROOT / "addons" /"blender_vdiff" / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
