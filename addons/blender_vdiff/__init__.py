@@ -17,10 +17,12 @@ import os, sys, logging, pathlib, json
 from typing import Generator
 
 import bpy
-from bpy.props import StringProperty
-from bpy.types import AddonPreferences, Panel, Operator, PropertyGroup, Window
+from bpy.props import StringProperty, CollectionProperty
+from bpy.types import AddonPreferences, Panel, Operator, OperatorFileListElement, PropertyGroup, Window
 from bpy.app import translations
 from bpy.app.handlers import persistent
+
+from bpy_extras.io_utils import ImportHelper
 
 from .src.blenddiff import BlendDiff
 
@@ -228,8 +230,30 @@ def objects_under_excluded_colls(view_layer=None, unique=True):
 
     return result
 
+######################
+# --- UI Classes --- #
+######################
+class VDIFF_OT_BrowseBlend(Operator, ImportHelper):
+    bl_idname  = "vdiff.browse_blend"
+    bl_label   = "Choose .blend"
+    bl_options = {'INTERNAL'}
 
-# --- UI Panel ---
+    # Restrict the visible/choosable files
+    filename_ext = ".blend"
+    filter_glob: StringProperty(default="*.blend", options={'HIDDEN'})
+
+    # (Optional) allow multi-select in future:
+    files: CollectionProperty(type=OperatorFileListElement)
+
+    def execute(self, context):
+        # Guard in case user types a path manually
+        if not self.filepath.lower().endswith(".blend"):
+            self.report({'ERROR'}, "Please select a .blend file")
+            return {'CANCELLED'}
+        context.window_manager.compare_filepath = self.filepath
+        return {'FINISHED'}
+    
+
 class VDIFF_PT_MainPanel(Panel):
     bl_label       = "Blender vDiff"
     bl_idname      = "VDIFF_PT_main"
@@ -239,9 +263,14 @@ class VDIFF_PT_MainPanel(Panel):
 
     def draw(self, context):
         layout = self.layout
-        wm     = context.window_manager
+        wm = context.window_manager
 
-        layout.prop(wm, "compare_filepath", text="File to compare")
+        row = layout.row(align=True)
+        path_box = row.row(align=True)
+        path_box.enabled = False
+        path_box.prop(wm, "compare_filepath", text="File to compare")
+        row.operator("vdiff.browse_blend", text="", icon='FILEBROWSER')
+
         layout.operator("vdiff.compare", icon='VIEWZOOM')
 
 
@@ -519,6 +548,7 @@ class VDIFF_OT_Compare(Operator):
 # --- Register ---
 classes = (
     #VDIFF_PG_Properties,
+    VDIFF_OT_BrowseBlend,
     VDIFF_PT_MainPanel,
     VDIFF_OT_confirm,
     VDIFF_OT_dialog,
@@ -530,9 +560,9 @@ def register():
         bpy.utils.register_class(cls)
 
     bpy.types.WindowManager.compare_filepath = StringProperty(
-      name="Compare File",
+      name="File to compare",
       description="Path to the .blend file to compare with",
-      subtype='FILE_PATH',
+      subtype='NONE',
       default=""
     )
 
