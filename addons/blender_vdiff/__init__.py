@@ -266,7 +266,9 @@ class VDIFF_PT_MainPanel(Panel):
         wm = context.window_manager
 
         row = layout.row(align=True)
-        row.prop(wm, "compare_filepath", text="File to compare")
+        path_box = row.row(align=True)
+        path_box.enabled = False
+        path_box.prop(wm, "compare_filepath", text="File to compare")
         row.operator("vdiff.browse_blend", text="", icon='FILEBROWSER')
 
         layout.operator("vdiff.compare", icon='VIEWZOOM')
@@ -558,9 +560,9 @@ def register():
         bpy.utils.register_class(cls)
 
     bpy.types.WindowManager.compare_filepath = StringProperty(
-      name="Compare File",
+      name="File to compare",
       description="Path to the .blend file to compare with",
-      subtype='FILE_PATH',
+      subtype='NONE',
       default=""
     )
 
