@@ -6,7 +6,7 @@
 import sys, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SRC  = ROOT / "src"
+SRC  = ROOT / "addons" / "blender_vdiff" / "src"
 
 # Only prepend once; keep it as str
 if str(SRC) not in sys.path:

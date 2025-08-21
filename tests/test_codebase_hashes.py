@@ -1,4 +1,4 @@
-from vdiff_core.blenddiff import BlendDiff
+from blenddiff import BlendDiff
 
 import pytest, json
 
