@@ -12,8 +12,8 @@ bl_info = {
     "tracker_url": ""
 }
 
-import os, sys, logging, pathlib, json
 
+import os, sys, logging, pathlib, json
 from typing import Generator
 
 import bpy
@@ -25,6 +25,7 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ImportHelper
 
 from .src.blenddiff import BlendDiff
+
 
 # Configure root logging once, replacing any prior handlers.
 log_dir = pathlib.Path(bpy.utils.user_resource('CONFIG', path='vdiff_logs', create=True))
@@ -64,7 +65,8 @@ class VDIFF_Preferences(AddonPreferences):
 
     sticky_compare_path: StringProperty(
         name="Last compare .blend",
-        subtype='FILE_PATH',
+        subtype='NONE',
+        options={'HIDDEN'},
         default="",
     )
 
@@ -289,13 +291,13 @@ class VDIFF_OT_BrowseBlend(Operator, ImportHelper):
     #files: CollectionProperty(type=OperatorFileListElement)
 
     def execute(self, context):
-        # Guard in case user types a path manually
-        fp = self.filepath
-        if not fp.lower().endswith(".blend"):
+        if not self.filepath.lower().endswith(".blend"):
             self.report({'ERROR'}, "Please select a .blend file")
             return {'CANCELLED'}
-        
-        context.window_manager.compare_filepath = fp
+        p = _prefs()
+        if p:
+            p.sticky_compare_path = self.filepath
+            bpy.app.timers.register(lambda: bpy.ops.wm.save_userpref() or None, first_interval=0.2)
 
         return {'FINISHED'}
     
@@ -310,13 +312,13 @@ class VDIFF_PT_MainPanel(Panel):
 
     def draw(self, context):
         layout = self.layout
-        wm = context.window_manager
+#        wm = context.window_manager
+        p = _prefs()
 
         row = layout.row(align=True)
-        path_box = row.row(align=True)
-        path_box.enabled = False
-        path_box.prop(wm, "compare_filepath", text="File to compare")
-        row.operator("vdiff.browse_blend", text="", icon='FILEBROWSER')
+        left= row.row(align=True); left.enabled = False
+        left.prop(p, "sticky_compare_path", text="File to compare")
+        right = row.operator("vdiff.browse_blend", text="", icon='FILEBROWSER')
 
         layout.operator("vdiff.compare", icon='VIEWZOOM')
 
