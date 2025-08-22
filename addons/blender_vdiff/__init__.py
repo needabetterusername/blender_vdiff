@@ -74,37 +74,6 @@ class VDIFF_Preferences(AddonPreferences):
         self.layout.prop(self, "sticky_compare_path")
 
 
-def _save_prefs_once():
-    try:
-        bpy.ops.wm.save_userpref()
-    except Exception:
-        pass
-    return None  # stop the timer
-
-
-def _on_compare_path_update(self, context):
-# Called when the compare_filepath StringProperty object is updated.
-    p = _prefs()
-    if p:
-        p.sticky_compare_path = self.compare_filepath
-        # Debounce: save a moment later so we don't call ops inside RNA update
-        timers.register(_save_prefs_once, first_interval=0.2)
-        LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Updated sticky_compare_path to \'{p.sticky_compare_path}\'')
-    else:
-        LOG.warning(f'{__name__}.{sys._getframe(0).f_code.co_name}: No preferences found, cannot update sticky_compare_path.')
-
-
-@persistent
-def _restore_compare_after_load(_):
-    """Update the volatile compare_filepath WM property after loading a .blend file."""
-    p = _prefs()
-    if p and p.sticky_compare_path:
-        bpy.context.window_manager.compare_filepath = p.sticky_compare_path
-    else:
-        #Use the current (if available) file's location as default
-        bpy.context.window_manager.compare_filepath = os.path.join(os.path.dirname(bpy.data.filepath), '')
-
-
 ############################
 # --- Helper functions --- #
 ############################
@@ -453,22 +422,24 @@ class VDIFF_OT_Compare(Operator):
     # Here we prep for the execution
     def invoke(self, context, event):
         wm = context.window_manager
+        prefs = _prefs()
+        if not prefs:
+            self.report({'ERROR'}, "Add-on preferences not available")
+            return {'CANCELLED'}
 
         # Ensure current file is saved & clean
         if not bpy.data.filepath:
             self.report({'ERROR'}, "Please save the current file before comparing.")
             return {'CANCELLED'}
         #if bpy.data.is_dirty:
-        #    self.report({'ERROR'}, "Please save or revert changes before comparing.")
-        #    return {'CANCELLED'}
+            ## TODO: Need a warning here about lost changes
+            #  ISSUE #3
 
-        target = self._validate_path(wm.compare_filepath)
+        target = self._validate_path(prefs.sticky_compare_path)
         if not target:
             return {'CANCELLED'}
 
-        ### MULTI-WINDOW HANDLING ###
         # Save window state(s) for restore after file change
-
         window_state_snapshots = []
         for win in main_window_generator():
             window_state_snapshots += [(win,get_window_state(win))]
@@ -608,25 +579,6 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    # The visual (volatile) compare filepath stored in the WindowManager
-    bpy.types.WindowManager.compare_filepath = StringProperty(
-      name="File to compare",
-      description="Path to the .blend file to compare with",
-      subtype='NONE',
-      default="",
-      update=_on_compare_path_update,
-    )
-
-    # Prime WM value from prefs immediately (covers first enable & each restart)
-    p = _prefs()
-    if p and p.sticky_compare_path:
-        bpy.context.window_manager.compare_filepath = p.sticky_compare_path
-
-    h = bpy.app.handlers.load_post
-    if _restore_compare_after_load in h:
-        h.remove(_restore_compare_after_load)
-    h.append(_restore_compare_after_load)
-
     global BD
     BD = BlendDiff()
 
@@ -634,15 +586,6 @@ def register():
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.WindowManager.compare_filepath
-
-    h = bpy.app.handlers.load_post
-    if _restore_compare_after_load in h:
-        h.remove(_restore_compare_after_load)
-
-    # Remove WM prop
-    if hasattr(bpy.types.WindowManager, "compare_filepath"):
-        del bpy.types.WindowManager.compare_filepath
 
     global BD
     BD = None
