@@ -19,7 +19,7 @@ from typing import Generator
 import bpy
 from bpy.props import StringProperty, CollectionProperty
 from bpy.types import AddonPreferences, Panel, Operator, OperatorFileListElement, PropertyGroup, Window
-from bpy.app import translations
+from bpy.app import translations, timers
 from bpy.app.handlers import persistent
 
 from bpy_extras.io_utils import ImportHelper
@@ -72,16 +72,26 @@ class VDIFF_Preferences(AddonPreferences):
         self.layout.prop(self, "sticky_compare_path")
 
 
+def _save_prefs_once():
+    try:
+        bpy.ops.wm.save_userpref()
+    except Exception:
+        pass
+    return None  # stop the timer
+
+
 def _on_compare_path_update(self, context):
 # Called when the compare_filepath StringProperty object is updated.
     p = _prefs()
     if p:
         p.sticky_compare_path = self.compare_filepath
+        # Debounce: save a moment later so we don't call ops inside RNA update
+        timers.register(_save_prefs_once, first_interval=0.2)
         LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Updated sticky_compare_path to \'{p.sticky_compare_path}\'')
     else:
         LOG.warning(f'{__name__}.{sys._getframe(0).f_code.co_name}: No preferences found, cannot update sticky_compare_path.')
 
-### REPLACE ABOVE
+
 @persistent
 def _restore_compare_after_load(_):
     """Update the volatile compare_filepath WM property after loading a .blend file."""
@@ -509,7 +519,7 @@ class VDIFF_OT_Compare(Operator):
 
             return None  # unregister the timer
 
-        bpy.app.timers.register(_call_set_context, first_interval=0.0)
+        timers.register(_call_set_context, first_interval=0.0)
 
         # -- Get diff content from JSON --#
         diff_changed = diff.get("changed", {})
