@@ -12,19 +12,20 @@ bl_info = {
     "tracker_url": ""
 }
 
-import os, sys, logging, pathlib, json
 
+import os, sys, logging, pathlib, json
 from typing import Generator
 
 import bpy
 from bpy.props import StringProperty, CollectionProperty
 from bpy.types import AddonPreferences, Panel, Operator, OperatorFileListElement, PropertyGroup, Window
-from bpy.app import translations
+from bpy.app import translations, timers
 from bpy.app.handlers import persistent
 
 from bpy_extras.io_utils import ImportHelper
 
 from .src.blenddiff import BlendDiff
+
 
 # Configure root logging once, replacing any prior handlers.
 log_dir = pathlib.Path(bpy.utils.user_resource('CONFIG', path='vdiff_logs', create=True))
@@ -43,22 +44,34 @@ logging.basicConfig(
 LOG = logging.getLogger(__name__)
 
 
-@persistent
-def update_compare_filepath(dummy):
-    wm = bpy.context.window_manager
-    if bpy.data.filepath:
-        wm.compare_filepath = os.path.join(os.path.dirname(bpy.data.filepath), '')
-    else:
-        wm.compare_filepath = ""
+#######################
+# --- Preferences --- #
+#######################
 
-# --- Storage for file path ---
-#class VDIFF_PG_Properties(PropertyGroup):
-#    compare_filepath: StringProperty(
-#        name="Compare File",
-#        description="Path to the .blend file to compare with",
-#        subtype='FILE_PATH',
-#        default=""
-#    )
+def _addon_key():
+    key = __package__ or __name__.split('.')[0]
+    LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Add-on key is {key}')
+
+    return key
+
+def _prefs():
+    ad = bpy.context.preferences.addons.get(_addon_key())
+    LOG.debug(f'{__name__}.{sys._getframe(0).f_code.co_name}: Add-on preferences: {ad}')
+    return getattr(ad, "preferences", None)
+
+
+class VDIFF_Preferences(AddonPreferences):
+    bl_idname = _addon_key()
+
+    sticky_compare_path: StringProperty(
+        name="Last compare .blend",
+        subtype='NONE',
+        options={'HIDDEN'},
+        default="",
+    )
+
+    def draw(self, context):
+        self.layout.prop(self, "sticky_compare_path")
 
 
 ############################
@@ -234,6 +247,7 @@ def objects_under_excluded_colls(view_layer=None, unique=True):
 # --- UI Classes --- #
 ######################
 class VDIFF_OT_BrowseBlend(Operator, ImportHelper):
+    """Operator to browse and select a .blend file for comparison."""
     bl_idname  = "vdiff.browse_blend"
     bl_label   = "Choose .blend"
     bl_options = {'INTERNAL'}
@@ -242,19 +256,23 @@ class VDIFF_OT_BrowseBlend(Operator, ImportHelper):
     filename_ext = ".blend"
     filter_glob: StringProperty(default="*.blend", options={'HIDDEN'})
 
-    # (Optional) allow multi-select in future:
-    files: CollectionProperty(type=OperatorFileListElement)
+    # Allow multi-select in future:
+    #files: CollectionProperty(type=OperatorFileListElement)
 
     def execute(self, context):
-        # Guard in case user types a path manually
         if not self.filepath.lower().endswith(".blend"):
             self.report({'ERROR'}, "Please select a .blend file")
             return {'CANCELLED'}
-        context.window_manager.compare_filepath = self.filepath
+        p = _prefs()
+        if p:
+            p.sticky_compare_path = self.filepath
+            bpy.app.timers.register(lambda: bpy.ops.wm.save_userpref() or None, first_interval=0.2)
+
         return {'FINISHED'}
     
 
 class VDIFF_PT_MainPanel(Panel):
+    """Panel to display the vDiff UI in the 3D Viewport Sidebar."""
     bl_label       = "Blender vDiff"
     bl_idname      = "VDIFF_PT_main"
     bl_space_type  = 'VIEW_3D'
@@ -263,13 +281,13 @@ class VDIFF_PT_MainPanel(Panel):
 
     def draw(self, context):
         layout = self.layout
-        wm = context.window_manager
+#        wm = context.window_manager
+        p = _prefs()
 
         row = layout.row(align=True)
-        path_box = row.row(align=True)
-        path_box.enabled = False
-        path_box.prop(wm, "compare_filepath", text="File to compare")
-        row.operator("vdiff.browse_blend", text="", icon='FILEBROWSER')
+        left= row.row(align=True); left.enabled = False
+        left.prop(p, "sticky_compare_path", text="File to compare")
+        right = row.operator("vdiff.browse_blend", text="", icon='FILEBROWSER')
 
         layout.operator("vdiff.compare", icon='VIEWZOOM')
 
@@ -404,22 +422,24 @@ class VDIFF_OT_Compare(Operator):
     # Here we prep for the execution
     def invoke(self, context, event):
         wm = context.window_manager
+        prefs = _prefs()
+        if not prefs:
+            self.report({'ERROR'}, "Add-on preferences not available")
+            return {'CANCELLED'}
 
         # Ensure current file is saved & clean
         if not bpy.data.filepath:
             self.report({'ERROR'}, "Please save the current file before comparing.")
             return {'CANCELLED'}
         #if bpy.data.is_dirty:
-        #    self.report({'ERROR'}, "Please save or revert changes before comparing.")
-        #    return {'CANCELLED'}
+            ## TODO: Need a warning here about lost changes
+            #  ISSUE #3
 
-        target = self._validate_path(wm.compare_filepath)
+        target = self._validate_path(prefs.sticky_compare_path)
         if not target:
             return {'CANCELLED'}
 
-        ### MULTI-WINDOW HANDLING ###
         # Save window state(s) for restore after file change
-
         window_state_snapshots = []
         for win in main_window_generator():
             window_state_snapshots += [(win,get_window_state(win))]
@@ -472,7 +492,7 @@ class VDIFF_OT_Compare(Operator):
 
             return None  # unregister the timer
 
-        bpy.app.timers.register(_call_set_context, first_interval=0.0)
+        timers.register(_call_set_context, first_interval=0.0)
 
         # -- Get diff content from JSON --#
         diff_changed = diff.get("changed", {})
@@ -547,7 +567,7 @@ class VDIFF_OT_Compare(Operator):
 
 # --- Register ---
 classes = (
-    #VDIFF_PG_Properties,
+    VDIFF_Preferences,
     VDIFF_OT_BrowseBlend,
     VDIFF_PT_MainPanel,
     VDIFF_OT_confirm,
@@ -559,15 +579,6 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    bpy.types.WindowManager.compare_filepath = StringProperty(
-      name="File to compare",
-      description="Path to the .blend file to compare with",
-      subtype='NONE',
-      default=""
-    )
-
-    bpy.app.handlers.load_post.append(update_compare_filepath)
-
     global BD
     BD = BlendDiff()
 
@@ -575,9 +586,6 @@ def register():
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.WindowManager.compare_filepath
-
-    bpy.app.handlers.load_post.remove(update_compare_filepath)
 
     global BD
     BD = None
